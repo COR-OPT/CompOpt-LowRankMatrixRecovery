@@ -37,7 +37,7 @@ module LinearConv
     """
     function genQuadProb(d, n, m, r, noise_lvl=0.0)
         A = randn(m, d); X = Utils.genMtx(d, n, r)
-        y = mapslices(norm, A * X, dims=[2])  # get measurements
+        y = mapslices(norm, A * X, dims=[2])[:]  # get measurements
         Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
         return QuadProb(y, X, A, noise_lvl)
     end
@@ -52,7 +52,7 @@ module LinearConv
     function genBilinProb(d1, d2, m, r, noise_lvl=0.0)
         A = randn(m, d1); B = randn(m, d2); X = Utils.genMtx(d1, d2, r)
         # factorize S
-        F = svd(X); Xs = F.S[1:r]; XU = F.U[1:end, 1:r] XV = F.V[1:end, 1:r]
+        F = svd(X); Xs = F.S[1:r]; XU = F.U[1:end, 1:r]; XV = F.V[1:end, 1:r]
         # sum all factors
         y = sum(Xs[i] * (A * XU[:, i]) .* (B * XV[:, i]) for i in 1:r)
         Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
@@ -123,7 +123,7 @@ module LinearConv
         # sign and A * X
         rSign = map.(sign, quadRes(qProb, Xcurr)); R = qProb.A * Xcurr
         # compute subgradient
-        grad[:] = (1 / m) * qProb.A' * (rSign .* R)
+        grad[:] = (2 / m) * qProb.A' * (rSign .* R)
         return grad
     end
 
@@ -153,11 +153,12 @@ module LinearConv
     """
     function pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
         Xtrue = qProb.X; d, n = size(Xtrue); grad = fill(0.0, (d, n))
-        q = λ; dist = fill(0.0, iters);
+        q = λ * rho; dist = fill(0.0, iters);
         for i = 1:iters
+            dist[i] = norm(Xinit - Xtrue)
             quadSubgrad!(qProb, Xinit, grad=grad)
             broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
-            q *= rho; dist[i] = norm(Xinit - Xtrue)
+            q *= rho
         end
         return Xinit, dist
     end
@@ -172,12 +173,27 @@ module LinearConv
     """
     function pSgd(bProb::BilinProb, Xinit, iters; λ = 1.0, rho = 0.98)
         Xtrue = bProb.X; d, n = size(Xtrue); grad = fill(0.0, (d, n))
-        q = λ; dist = fill(0.0, iters);
+        q = λ * rho; dist = fill(0.0, iters);
         for i = 1:iters
+            dist[i] = norm(Xinit - Xtrue)
             bilinSubgrad!(bProb, Xinit, grad=grad)
             broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
-            q *= rho; dist[i] = norm(Xinit - Xtrue)
+            q *= rho
         end
         return Xinit, dist
+    end
+
+
+    """
+        pSgd_init(qProb::QuadProb, iters, delta; λ = 1.0, rho = 0.98)
+
+    Apply the projected subgradient method with artificial "good"
+    initialization.
+    """
+    function pSgd_init(qProb::QuadProb, iters, delta; λ = 1.0, rho = 0.98)
+        Xtrue = qProb.X; d, n = size(Xtrue)
+        randDir = randn(d, n); randDir = randDir / norm(randDir)
+        Xinit = Xtrue + delta * randDir * norm(Xtrue)
+        return pSgd(qProb, Xinit, iters, λ=λ, rho=rho)
     end
 end
