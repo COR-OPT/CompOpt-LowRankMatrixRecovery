@@ -63,4 +63,15 @@ module Utils
         return result
     end
 
+
+    """
+        norm_mat_dist(A, B)
+
+    Computes the normalized matrix distance (in Frobenius norm) between
+    matrices ``A`` and ``B``.
+    """
+    function norm_mat_dist(A, B)
+        return sqrt(
+            abs((norm(A)^2 + norm(B)^2 - 2 * dot(A, B)) / norm(B)^2))
+    end
 end

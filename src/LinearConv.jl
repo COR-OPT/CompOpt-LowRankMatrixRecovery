@@ -220,7 +220,7 @@ module LinearConv
         Xtrue = qProb.X; d, r = size(Xtrue); grad = fill(0.0, (d, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
-            dist[i] = Utils.ortho_dist(Xtrue, Xinit) / norm(Xtrue)
+            dist[i] = Utils.norm_mat_dist(Xinit * Xinit', Xtrue * Xtrue')
             grad[:] = quadSubgrad(qProb, Xinit)
 			Xinit[:] = Xinit - q * (grad / norm(grad))
             q = q * rho
@@ -236,11 +236,15 @@ module LinearConv
     to the quadratic sensing problem for `iters` iterations, given a problem
     instance `qProb` and an initial estimate `Xinit`.
     """
-    function pSgd(qProb::SymQuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
+    function pSgd(qProb::SymQuadProb, Xinit, iters;
+				  λ=1.0, rho=0.98, eps=1e-10)
         Xtrue = qProb.X; d, r = size(Xtrue); grad = fill(0.0, (d, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
-            dist[i] = Utils.ortho_dist(Xtrue, Xinit) / norm(Xtrue)
+            dist[i] = Utils.norm_mat_dist(Xinit * Xinit', Xtrue * Xtrue')
+			if dist[i] <= eps
+				return Xinit, dist[1:i]
+			end
             grad[:] = symQuadSubgrad(qProb, Xinit)
 			Xinit[:] = Xinit - q * (grad / norm(grad))
             q = q * rho
@@ -256,13 +260,17 @@ module LinearConv
     to the bilinear sensing problem for `iters` iterations, given a problem
     instance `qProb` and an initial estimate `(Uinit, Vinit)`.
     """
-    function pSgd(bProb::BilinProb, Uinit, Vinit, iters; λ=1.0, rho=0.98)
+    function pSgd(bProb::BilinProb, Uinit, Vinit, iters;
+				  λ=1.0, rho=0.98, eps=1e-10)
         d1, r = size(Uinit); d2, r = size(Vinit)
 		Mtrue = bProb.W * bProb.X'
 		gradU = fill(0.0, (d1, r)); gradV = fill(0.0, (d2, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
-            dist[i] = norm(Uinit * Vinit' - Mtrue) / norm(Mtrue)
+            dist[i] = Utils.norm_mat_dist(Uinit * Vinit', Mtrue)
+			if dist[i] <= eps
+				return Uinit, Vinit, dist[1:i]
+			end
             gradU[:], gradV[:] = bilinSubgrad(bProb, Uinit, Vinit)
 			Uinit = Uinit - (q * gradU / norm(gradU))
 			Vinit = Vinit - (q * gradV / norm(gradV))
@@ -279,11 +287,11 @@ module LinearConv
     initialization to a quadratic sensing problem.
     """
     function pSgd_init(qProb::Union{SymQuadProb, QuadProb}, iters, delta;
-					   λ=1.0, rho=0.98)
+					   λ=1.0, rho=0.98, eps=1e-10)
         Xtrue = qProb.X; d, r = size(Xtrue)
         randDir = randn(d, r); randDir = randDir / norm(randDir)
         Xinit = Xtrue + delta * randDir * norm(Xtrue)
-        return pSgd(qProb, Xinit, iters, λ=λ, rho=rho)
+        return pSgd(qProb, Xinit, iters, λ=λ, rho=rho, eps=eps)
     end
 
 
@@ -293,13 +301,13 @@ module LinearConv
     Apply the projected subgradient method with artificial "good"
     initialization to a bilinear sensing problem.
     """
-    function pSgd_init(bProb::BilinProb, iters, delta; λ=1.0, rho=0.98)
+    function pSgd_init(bProb::BilinProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10)
         Wtrue = bProb.W; Xtrue = bProb.X
 		d1, r = size(Wtrue); d2, r = size(Xtrue)
 		randW = randn(d1, r); randW /= norm(randW)
 		randX = randn(d2, r); randX /= norm(randX)
 		Uinit = Wtrue + delta * randW * norm(Wtrue)
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
-        return pSgd(bProb, Uinit, Vinit, iters, λ=λ, rho=rho)
+        return pSgd(bProb, Uinit, Vinit, iters, λ=λ, rho=rho, eps=eps)
     end
 end
