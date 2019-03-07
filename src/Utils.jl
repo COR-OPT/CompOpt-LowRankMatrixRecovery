@@ -35,4 +35,32 @@ module Utils
         end
     end
 
+
+    """
+        ortho_dist(A, B)
+
+    Calculates the distance between matrices ``A, B`` up to a natural rotation
+    by solving ``\\min_{Q \\in O(d)} \\| A - B Q \\|_F``.
+    """
+    function ortho_dist(A, B)
+        Msvd = svd(B' * A); Q = Msvd.U * Msvd.Vt;
+        return norm(A - B * Q)
+    end
+
+
+    """
+        rowwise_prod(A, B)
+
+    Computes the dot product between the rows of matrices ``A`` and ``B``.
+    """
+    function rowwise_prod(A, B)
+        d1, r1 = size(A); d2, r2 = size(B)
+        @assert (d1 == d2) && (r1 == r2)
+        result = fill(0.0, d1)
+        @inbounds for i = 1:d1
+            result[i] = (A[i, :])' * B[i, :]
+        end
+        return result
+    end
+
 end
