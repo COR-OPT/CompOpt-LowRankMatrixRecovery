@@ -46,13 +46,13 @@ module LinearConv
 
 
 	"""
-		genSymQuadProb(d, n, m, r, noise_lvl=0.0)
+		genSymQuadProb(d, m, r, noise_lvl=0.0)
 
 	Generates a symmetrized quadratic sensing problem in dimensions
 	``d \\times n`` where ``\\rank(X) = r`` with a desired noise level.
 	"""
-	function genSymQuadProb(d, n, m, r, noise_lvl=0.0)
-		A1 = randn(m, d); A2 = randn(m, d); X = randn(d, r) * randn(r, n)
+	function genSymQuadProb(d, m, r, noise_lvl=0.0)
+		A1 = randn(m, d); A2 = randn(m, d); X = randn(d, r)
 		y = vec(mapslices(sqnorm, A1 * X, dims=[2]))
 		y = y - vec(mapslices(sqnorm, A2 * X, dims=[2]))
 		Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
@@ -66,8 +66,8 @@ module LinearConv
     Generates a quadratic sensing problem in dimensions ``d \\times n`` where
     ``\\rank(X) = r`` with a desired noise level.
     """
-    function genQuadProb(d, n, m, r, noise_lvl=0.0)
-		A = randn(m, d); X = randn(d, r) * randn(r, n)
+    function genQuadProb(d, m, r, noise_lvl=0.0)
+		A = randn(m, d); X = randn(d, r)
 		y = mapslices(sqnorm, A * X, dims=[2])[:]  # get measurements
         Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
         return QuadProb(y, X, A, noise_lvl)
@@ -108,8 +108,8 @@ module LinearConv
 	current estimate `Xcurr`.
 	"""
 	function symQuadRes(qProb, Xcurr)
-		r = mapslices(sqnorm, qProb.A1 * Xcurr, dims=[2])[:]
-		broadcast!(-, r, r, mapslices(sqnorm, qProb.A2 * Xcurr, dims=[2])[:])
+		r = vec(mapslices(sqnorm, qProb.A1 * Xcurr, dims=[2]))
+		r = r - vec(mapslices(sqnorm, qProb.A2 * Xcurr, dims=[2]))
 		broadcast!(-, r, r, qProb.y)
 		return r
 	end
@@ -188,6 +188,7 @@ module LinearConv
 		m = length(qProb.y)
 		rSign = map.(sign, symQuadRes(qProb, Xcurr))
 		R1 = qProb.A1 * Xcurr; R2 = qProb.A2 * Xcurr
+		r1 = qProb.A1'
 		return (2 / m) * (qProb.A1' * (rSign .* R1) - qProb.A2' * (rSign .* R2))
 	end
 
@@ -216,7 +217,7 @@ module LinearConv
     instance `qProb` and an initial estimate `Xinit`.
     """
     function pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
-        Xtrue = qProb.X; d, n = size(Xtrue); grad = fill(0.0, (d, n))
+        Xtrue = qProb.X; d, r = size(Xtrue); grad = fill(0.0, (d, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
             dist[i] = Utils.ortho_dist(Xtrue, Xinit) / norm(Xtrue)
@@ -236,7 +237,7 @@ module LinearConv
     instance `qProb` and an initial estimate `Xinit`.
     """
     function pSgd(qProb::SymQuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
-        Xtrue = qProb.X; d, n = size(Xtrue); grad = fill(0.0, (d, n))
+        Xtrue = qProb.X; d, r = size(Xtrue); grad = fill(0.0, (d, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
             dist[i] = Utils.ortho_dist(Xtrue, Xinit) / norm(Xtrue)
@@ -279,8 +280,8 @@ module LinearConv
     """
     function pSgd_init(qProb::Union{SymQuadProb, QuadProb}, iters, delta;
 					   λ=1.0, rho=0.98)
-        Xtrue = qProb.X; d, n = size(Xtrue)
-        randDir = randn(d, n); randDir = randDir / norm(randDir)
+        Xtrue = qProb.X; d, r = size(Xtrue)
+        randDir = randn(d, r); randDir = randDir / norm(randDir)
         Xinit = Xtrue + delta * randDir * norm(Xtrue)
         return pSgd(qProb, Xinit, iters, λ=λ, rho=rho)
     end
