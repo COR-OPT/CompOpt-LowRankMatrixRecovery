@@ -41,6 +41,16 @@ module LinearConv
     end
 
 
+	# non-euclidean robust pca formulation
+	struct RpcaProb
+		W :: Array{Float64, 2}  # X_{\sharp} X_{\sharp}^T + S
+		X :: Array{Float64, 2}  # X_{\sharp}
+		S :: Array{Float64, 2}  # S - sparse corruption matrix
+		gamma :: Float64  		# radius of 2,\infty norm
+		pfail :: Float64
+	end
+
+
 	#= squared norm shortcut =#
 	sqnorm(x) = norm(x)^2
 
@@ -86,6 +96,20 @@ module LinearConv
         Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
         return BilinProb(y, W, X, A, B, noise_lvl)
     end
+
+
+	"""
+		genRpcaProb(d, r, corr_lvl=0.0)
+
+	Generates a robust pca problem in dimensions ``d \\times r`` where
+	a `corr_lvl` fraction of entries are outliers.
+	"""
+	function genRpcaProb(d, r, corr_lvl=0.0)
+		X = Utils.genIncoherentMatrix(d, r)
+		S = Utils.genSparseMatrix(d, r, corr_lvl)
+		W = X * X' + S
+		return RpcaProb(W, X, S, 2 * Utils.abNorm(X, Inf, 2), corr_lvl)
+	end
 
 
     """
@@ -170,7 +194,7 @@ module LinearConv
     Compute the subgradient at `Xcurr` for the quadratic sensing problem.
     """
     function quadSubgrad(qProb, Xcurr)
-        m = length(qProb.y); d, n = size(Xcurr)
+		m = length(qProb.y)
         # sign and A * X
         rSign = map.(sign, quadRes(qProb, Xcurr)); R = qProb.A * Xcurr
         # compute subgradient
@@ -188,7 +212,6 @@ module LinearConv
 		m = length(qProb.y)
 		rSign = map.(sign, symQuadRes(qProb, Xcurr))
 		R1 = qProb.A1 * Xcurr; R2 = qProb.A2 * Xcurr
-		r1 = qProb.A1'
 		return (2 / m) * (qProb.A1' * (rSign .* R1) - qProb.A2' * (rSign .* R2))
 	end
 
@@ -200,13 +223,27 @@ module LinearConv
 	problem.
     """
     function bilinSubgrad(bProb, Ucurr, Vcurr)
-        m = length(bProb.y); d1, d2 = size(Ucurr * Vcurr')
+		m = length(bProb.y)
         rSign = map.(sign, bilinRes(bProb, Ucurr, Vcurr))
 		R1 = bProb.A * Ucurr; R2 = bProb.B * Vcurr;
-		gU = (1 / m) * R2' * (rSign .* bProb.A)
-		gV = (1 / m) * R1' * (rSign .* bProb.B)
-		return gU', gV'
+		return (1 / m) * (rSign .* bProb.A)' * R2, (1 / m) * (rSign .* bProb.B)' * R1
     end
+
+
+	# TODO: Complete function
+	function rpcaStep(prob::RpcaProb, Xk, C, gamma=10.0; maxIt=5000, eps=1e-10)
+		Yk = copy(Xk); Ybest = copy(Xk); minF = Inf
+		Gquad = fill(0.0, size(Xk))  # (sub)gradient 1
+		Gnorm = fill(0.0, size(Xk))  # (sub)gradient 2
+		for i = 1:maxIt
+			# apply quadratic penalty gradient
+			Utils.subg_sq21Norm(Yk, Xk, Gquad)
+			Yk[:] = Yk[:] - (1 / gamma) * Gquad
+			# TODO: apply gradient of ell-1 elementwise norm
+			# apply projection
+			Yk[:] = Utils.matProj_2inf(Yk, C)  # project back to C
+		end
+	end
 
 
     """
@@ -222,7 +259,7 @@ module LinearConv
         for i = 1:iters
             dist[i] = Utils.norm_mat_dist(Xinit * Xinit', Xtrue * Xtrue')
             grad[:] = quadSubgrad(qProb, Xinit)
-			Xinit[:] = Xinit - q * (grad / norm(grad))
+			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
             q = q * rho
         end
         return Xinit, dist
@@ -246,7 +283,7 @@ module LinearConv
 				return Xinit, dist[1:i]
 			end
             grad[:] = symQuadSubgrad(qProb, Xinit)
-			Xinit[:] = Xinit - q * (grad / norm(grad))
+			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
             q = q * rho
         end
         return Xinit, dist
@@ -272,8 +309,8 @@ module LinearConv
 				return Uinit, Vinit, dist[1:i]
 			end
             gradU[:], gradV[:] = bilinSubgrad(bProb, Uinit, Vinit)
-			Uinit = Uinit - (q * gradU / norm(gradU))
-			Vinit = Vinit - (q * gradV / norm(gradV))
+			broadcast!(-, Uinit, Uinit, q * gradU / norm(gradU))
+			broadcast!(-, Vinit, Vinit, q * gradV / norm(gradV))
             q = q * rho
         end
         return Uinit, Vinit, dist

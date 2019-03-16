@@ -1,5 +1,6 @@
 module Utils
 
+    using FFTW
     using LinearAlgebra
     using Random
     using Statistics
@@ -73,5 +74,115 @@ module Utils
     function norm_mat_dist(A, B)
         return sqrt(
             abs((norm(A)^2 + norm(B)^2 - 2 * dot(A, B)) / norm(B)^2))
+    end
+
+
+    """
+        abNorm(A, a, b)
+
+    Compute the elementwise matrix norm
+    `` \\| A \\|_{b, a} := \\| (
+        \\| (A_{1, :}) \\|_b, \\dots, \\| A_{n, :} \\|_b ) \\|_a ``.
+    """
+    function abNorm(A, a::Real, b::Real)
+        # rowwise application of b-norm
+        return norm(vec(mapslices(x -> norm(x, b), A, dims=[2])), a)
+    end
+
+
+    """
+        matProj_2inf(A, gamma)
+
+    Projects a matrix ``A`` to the ``2 \\to \\infty`` ball by decomposing the
+    problem to ``n`` independent problems, one per row.
+    """
+    function matProj_2inf(A, gamma)
+        return mapslices(x -> gamma * x / norm(x), A, dims=[2])
+    end
+
+
+    """
+        dist_subg(v)
+
+    Returns a subgradient for the distance function expressed as a vector.
+    """
+    function dist_subg(v)
+        if norm(v) == 0.0
+            return 0
+        else
+            return v / norm(v)
+        end
+    end
+
+
+    """
+        subg_sq21Norm(X, Xk; G=nothing)
+
+    Returns a subgradient for the squared ``\\| \\cdot \\|_{2,1}`` matrix norm.
+    """
+    function subg_sq21Norm(X, Xk; G=nothing)
+        cVal = abNorm(X - Xk, 1, 2)
+        if G == nothing
+            G = fill(0.0, size(X))
+        end
+        G[:] = 2 * cVal * mapslices(dist_subg, X - Xk, dims=[2])
+        return G
+    end
+
+
+	"""
+		subg_sq2infNorm(X, Xk; G=nothing)
+
+	Compute a subgradient for the squared ``2,infty`` norm of the difference
+	``X - X_k``.
+	"""
+	function subg_sq2infNorm(X, Xk; G=nothing)
+		# maximizing indices
+		indMax = argmax(vec(mapslices(norm, X - Xk, dims=[2])))
+		if G == nothing
+			G = fill(0.0, size(X))
+		else
+			fill!(G, 0.0)  # reset to zero
+		end
+		G[indMax, :] = 2 * ((X - Xk)[indMax, :])
+		return G
+	end
+
+
+    """
+        subDftMat(A, d, r)
+
+    Return the first ``r`` columns from ``d`` randomly chosen rows of a
+    ``2d \\times 2d`` DFT matrix.
+    """
+    function subDftMat(A, d, r)
+        fmat = shuffle(fft(Matrix{Float64}(I, 2 * d, 2 * d), 2))
+        return fmat[1:d, 1:r]
+    end
+
+
+    """
+        genIncoherentMatrix(d, r)
+
+    Generates a ``d \\times r`` matrix that satisfies
+    `` \\| A \\|_{2,\\infty} \\leq \\sqrt{c r / d} \\| A \\|_{op}``.
+    """
+    function genIncoherentMatrix(d, r)
+        return randn(d, r)   # fix this
+    end
+
+
+    """
+        genSparseMatrix(d, r, corr_lvl)
+
+    Generates an arbitrary sparse corruption matrix of size ``d \\times r``
+    with `corr_lvl` fraction of nonzero entries.
+    """
+    function genSparseMatrix(d, r, corr_lvl)
+        bernoulli(p) = trunc(Int, rand() <= p);
+        # corruption matrix
+        indMat = map(x -> bernoulli(corr_lvl), ones(d, r))
+        S = 2 * randn(d, r)  # sparse corruption
+        return indMat .* S
     end
 end
