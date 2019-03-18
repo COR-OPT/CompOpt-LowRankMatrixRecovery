@@ -4,7 +4,7 @@ using Printf
 using Random
 using Statistics
 
-include("src/LinearConv.jl")
+include("src/CompOpt.jl")
 
 
 #= setup the bilinear sensing experiment =#
@@ -13,8 +13,8 @@ function bilin_experiment(d1, d2, i, r, iters, delta, reps;
 	for noise_lvl = 0:0.02:0.48
 		success = 0; m = i * r * (d1 + d2)
 		for k = 1:reps
-			prob = LinearConv.genBilinProb(d1, d2, m, r, noise_lvl)
-			_, _, ds = LinearConv.pSgd_init(prob, iters, delta, eps=success_eps)
+			prob = CompOpt.genBilinProb(d1, d2, m, r, noise_lvl)
+			_, _, ds = CompOpt.pSgd_init(prob, iters, delta, eps=success_eps)
 			success += (ds[end] <= success_eps) ? 1 : 0
 		end
 		@printf("%d, %.2f, %.2f\n", i, noise_lvl, success / reps)
@@ -26,15 +26,15 @@ end
 function quad_experiment(d, i, r, iters, delta, reps;
 						 success_eps=1e-5, problem=:symmetrized)
 	if problem == :symmetrized
-		pGen = LinearConv.genSymQuadProb; m = i * r * d
+		pGen = CompOpt.genSymQuadProb; m = i * r * d
 	else
-		pGen = LinearConv.genQuadProb; m = i * (r^2) * d
+		pGen = CompOpt.genQuadProb; m = i * (r^2) * d
 	end
 	for noise_lvl = 0:0.02:0.48
 		success = 0
 		for k = 1:reps
 			prob = pGen(d, m, r, noise_lvl)
-			_, ds = LinearConv.pSgd_init(prob, iters, delta, eps=success_eps)
+			_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=success_eps)
 			success += (ds[end] <= success_eps) ? 1 : 0
 		end
 		@printf("%d, %.2f, %.2f\n", i, noise_lvl, success / reps)

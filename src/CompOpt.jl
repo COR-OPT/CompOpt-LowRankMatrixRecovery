@@ -2,10 +2,9 @@
 A module implementing nonsmooth optimization methods for a variety of
 statistical problems that exhibit sharpness and weak convexity.
 """
-module LinearConv
+module CompOpt
 
     include("Utils.jl")
-	include("NaiveGD.jl")
 
     using LinearAlgebra
     using Random
