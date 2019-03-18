@@ -5,6 +5,7 @@ statistical problems that exhibit sharpness and weak convexity.
 module LinearConv
 
     include("Utils.jl")
+	include("NaiveGD.jl")
 
     using LinearAlgebra
     using Random
@@ -216,6 +217,25 @@ module LinearConv
 	end
 
 
+	"""
+		symQuadGrad(qProb, Xcurr)
+
+	Compute the gradient at `Xcurr` for the symmetrized quadratic sensing
+	problem.
+	"""
+	function symQuadGrad(qProb, Xcurr)
+		m = length(qProb.y)
+		res = symQuadRes(qProb, Xcurr)
+		R1 = qProb.A1 * Xcurr; R2 = qProb.A2 * Xcurr
+		return (2 / m) * (qProb.A1' * (res .* R1) - qProb.A2' * (res .* R2))
+	end
+
+
+	function symQuadNaiveGD(qProb, Xcurr, iters; eps=1e-12)
+		# TODO: Implement
+	end
+
+
     """
         bilinSubgrad(bProb, Ucurr, Vcurr)
 
@@ -228,6 +248,41 @@ module LinearConv
 		R1 = bProb.A * Ucurr; R2 = bProb.B * Vcurr;
 		return (1 / m) * (rSign .* bProb.A)' * R2, (1 / m) * (rSign .* bProb.B)' * R1
     end
+
+
+	"""
+		bilinGrad(bProb, Ucurr, Vcurr)
+
+	Compute the naive gradient at `(Ucurr, Vcurr)` for the bilinear sensing
+	problem.
+	"""
+	function bilinGrad(bProb, Ucurr, Vcurr)
+		m = length(bProb.y)
+		res = bilinRes(bProb, Ucurr, Vcurr)
+		R1 = bProb.A * Ucurr; R2 = bProb.B * Vcurr
+		return (2 / m) * (res .* bProb.A)' * R2, (2 / m) * (res .* bProb.B)' * R1
+	end
+
+
+	function bilinNaiveGD(bProb, Ucurr, Vcurr, iters; eps=1e-12)
+		# TODO: Implement
+	end
+
+
+	"""
+		nEuclidRpcaGrad(prob::RpcaProb, Xcurr)
+
+	Compute the naive gradient at `Xcurr` for the non-euclidean robust pca
+	formulation.
+	"""
+	function nEuclidRpcaGrad(prob::RpcaProb, Xcurr)
+		return 2 * (2 * Xcurr * (Xcurr * Xcurr') - (prob.W + prob.W') * Xcurr)
+	end
+
+
+	function nEuclidRpcaNaiveGD(prob::RpcaProb, Xcurr, iters, gamma; eps=1e-12)
+		# TODO: Implement
+	end
 
 
 	# TODO: Complete function
