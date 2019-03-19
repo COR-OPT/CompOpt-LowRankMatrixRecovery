@@ -115,7 +115,7 @@ module CompOpt
 	"""
 	function genRpcaProb(d, r, corr_lvl=0.0)
 		X = Utils.genIncoherentMatrix(d, r)
-		S = Utils.genSparseMatrix(d, r, corr_lvl)
+		S = Utils.genSparseMatrix(d, d, corr_lvl)
 		W = X * X' + S
 		return RpcaProb(W, X, S, 2 * Utils.abNorm(X, Inf, 2), corr_lvl)
 	end
@@ -211,6 +211,16 @@ module CompOpt
         r = bilinRes(bProb, Ucurr, Vcurr)
         return (1 / length(bProb.y)) * norm(r, 1)
     end
+
+
+	"""
+		matCompLoss(prob::MatCompProb, Xcurr)
+
+	Returns the Frobenius error of the PSD matrix completion iterate.
+	"""
+	function matCompLoss(prob::MatCompProb, Xcurr)
+		return norm(prob.mask .* (Xcurr * Xcurr' - prob.M))
+	end
 
 
     """
@@ -419,35 +429,50 @@ module CompOpt
 	end
 
 
-	"""
-		nEuclidRpcaGrad(prob::RpcaProb, Xcurr)
-
-	Compute the naive gradient at `Xcurr` for the non-euclidean robust pca
-	formulation.
-	"""
-	function nEuclidRpcaGrad(prob::RpcaProb, Xcurr)
-		return 2 * (2 * Xcurr * (Xcurr * Xcurr') - (prob.W + prob.W') * Xcurr)
+	#= Helper function for the cost of the prox-linear objective for RPCA =#
+	proxlin_rpca_cost(X, Xk, C, gamma) = begin
+		fcA = sum(abs.(X * Xk' + Xk * X' - C))
+		fcB = (1 / (2 * gamma)) * Utils.abNorm(X - Xk, 1, 2)
+		return fcA + fcB
 	end
 
 
-	function nEuclidRpcaNaiveGD(prob::RpcaProb, Xcurr, iters, gamma; eps=1e-12)
-		# TODO: Implement
-	end
+	"""
+		rpcaStep(prob::RpcaProb, Xk, C; gamma=10.0, eta=0.01, maxIt=5000)
 
+	Compute an (approximate) prox-linear step of the non-euclidean robust PCA
+	formulation, given a current iterate `Xk`, an upper bound `C` on the
+	``\\ell_{2 \\to \\infty}`` norm of the estimates, and optional parameters:
+	- ``gamma``: the quadratic penalty parameter
+	- ``eta``: the step size
+	- `maxIt`: maximum number of iterations
 
-	# TODO: Complete function
-	function rpcaStep(prob::RpcaProb, Xk, C, gamma=10.0; maxIt=5000, eps=1e-10)
+	Uses the subgradient method internally.
+	"""
+	function rpcaStep(prob::RpcaProb, Xk, C; gamma=10.0, eta=0.01, maxIt=5000)
 		Yk = copy(Xk); Ybest = copy(Xk); minF = Inf
+		factC = Xk * Xk' + prob.W  # constant factor in 1-norm
+		fCost = (X -> proxlin_rpca_cost(X, Xk, factC, gamma))
 		Gquad = fill(0.0, size(Xk))  # (sub)gradient 1
 		Gnorm = fill(0.0, size(Xk))  # (sub)gradient 2
+		Gtot = fill(0.0, size(Xk))  # total
 		for i = 1:maxIt
-			# apply quadratic penalty gradient
-			Utils.subg_sq21Norm(Yk, Xk, Gquad)
-			Yk[:] = Yk[:] - (1 / gamma) * Gquad
-			# TODO: apply gradient of ell-1 elementwise norm
+			# get quadratic penalty gradient
+			Gquad[:] = Utils.subg_sq21Norm(Yk, Xk)
+			rmul!(Gquad, 1 / gamma)
+			# Yk[:] = Yk[:] - (1 / gamma) * Gquad
+			# get subgradient of ell-1 elementwise norm
+			Gnorm[:] = 2 * sign.(Xk * Yk' + Yk * Xk' - factC) * Xk
+			Gtot[:] = Gquad + Gnorm;
+			# apply subgradient step
+			broadcast!(-, Yk, Yk, eta * Gtot / (norm(Gtot)^2))
 			# apply projection
 			Yk[:] = Utils.matProj_2inf(Yk, C)  # project back to C
+			if fCost(Yk) < minF
+				copyto!(Ybest, Yk); minF = fCost(Yk)  # update stuff
+			end
 		end
+		return Ybest
 	end
 
 
@@ -523,22 +548,22 @@ module CompOpt
 
 
 	"""
-		pSgd(prob::MatCompProb, Xinit, iters; λ=1.0, rho=0.98, eps=1e-10)
+		pSgd(prob::MatCompProb, Xinit, iters; eta=1, eps=1e-10)
 
-	Apply the projected subgradient method with geometrically decaying step
-	to the matrix completion problem for `iters` iterations, given a problem
-	instance `prob` and an initial estimate `Xinit`.
+	Apply the projected subgradient method with Polyak step size to the matrix
+	completion problem for `iters` iterations, given a problem instance `prob`
+	and an initial estimate `Xinit`.
 	"""
-	function pSgd(prob::MatCompProb, Xinit, iters; λ=1.0, rho=0.98, eps=1e-10)
-		q = λ; dist = fill(0.0, iters); grad = fill(0.0, size(Xinit))
+	function pSgd(prob::MatCompProb, Xinit, iters; eta=1, eps=1e-10)
+		dist = fill(0.0, iters); grad = fill(0.0, size(Xinit))
 		for i = 1:iters
 			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', prob.M)
 			if dist[i] <= eps
 				return Xinit, dist[1:i]
 			end
 			grad[:] = matCompSubgrad(prob, Xinit)
-			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
-			q = q * rho
+			step = eta * matCompLoss(prob, Xinit)
+			broadcast!(-, Xinit, Xinit, step * grad / (norm(grad)^2))
 		end
 		return Xinit, dist
 	end
@@ -577,16 +602,15 @@ module CompOpt
 
 
 	"""
-		pSgd_init(prob::MatCompProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10)
+		pSgd_init(prob::MatCompProb, iters, delta; eta=1.0, eps=1e-10)
 
 	Apply the projected subgradient method with artifical "good" initialization
-	to a PSD matrix completion problem.
+	to a PSD matrix completion problem, using the Polyak step size.
 	"""
-	function pSgd_init(prob::MatCompProb, iters, delta;
-					   λ=1.0, rho=0.98, eps=1e-10)
+	function pSgd_init(prob::MatCompProb, iters, delta; eta=1.0, eps=1e-10)
         Xtrue = prob.X; d, r = size(Xtrue)
         randDir = randn(d, r); randDir = randDir / norm(randDir)
         Xinit = Xtrue + delta * randDir * norm(Xtrue)
-        return pSgd(prob, Xinit, iters, λ=λ, rho=rho, eps=eps)
+        return pSgd(prob, Xinit, iters, eta=eta, eps=eps)
     end
 end

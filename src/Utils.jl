@@ -139,41 +139,21 @@ module Utils
     """
     function dist_subg(v)
         if norm(v) == 0.0
-            return 0
+            return 0 * v
         else
             return v / norm(v)
         end
     end
 
 
-	"""
-		subg_elt1Norm(X, Y, Z; G=nothing)
-
-	Return a subgradient for  ``\\| XY^T + YX^T - Z \\|_1``.
-	"""
-	function subg_elt1Norm(X, Y, Z; G=nothing)
-		if G == nothing
-			G = fill(0.0, size(X))
-		end
-		P = X * Y' + Y * X' - Z
-		G = sign(P) .* (2 * X)
-		# TODO: Finish
-	end
-
-
-
     """
-        subg_sq21Norm(X, Xk; G=nothing)
+        subg_sq21Norm(X, Xk)
 
     Returns a subgradient for the squared ``\\| \\cdot \\|_{2,1}`` matrix norm.
     """
-    function subg_sq21Norm(X, Xk; G=nothing)
+    function subg_sq21Norm(X, Xk)
         cVal = abNorm(X - Xk, 1, 2)
-        if G == nothing
-            G = fill(0.0, size(X))
-        end
-        G[:] = 2 * cVal * mapslices(dist_subg, X - Xk, dims=[2])
-        return G
+        return 2 * cVal * mapslices(dist_subg, X - Xk, dims=[2])
     end
 
 
