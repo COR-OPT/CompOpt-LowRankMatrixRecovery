@@ -37,6 +37,24 @@ module Utils
     end
 
 
+	"""
+		setupStep(step)
+
+	Given a step size which is either a scalar or a callable with 1-argument,
+	returns a step size callable which accepts the iteration number as an
+	argument.
+	"""
+	function setupStep(step)
+		if isa(step, Number)
+			return (i -> step)
+		elseif isa(step, Function)
+			return (i -> step(i))
+		else
+			throw(Exception("Unsupported type for step size schedule!"))
+		end
+	end
+
+
     """
         ortho_dist(A, B)
 
@@ -113,6 +131,21 @@ module Utils
             return v / norm(v)
         end
     end
+
+
+	"""
+		subg_elt1Norm(X, Y, Z; G=nothing)
+
+	Return a subgradient for  ``\\| XY^T + YX^T - Z \\|_1``.
+	"""
+	function subg_elt1Norm(X, Y, Z; G=nothing)
+		if G == nothing
+			G = fill(0.0, size(X))
+		end
+		P = X * Y' + Y * X' - Z
+		# TODO: Complete
+	end
+
 
 
     """

@@ -230,8 +230,42 @@ module CompOpt
 	end
 
 
-	function symQuadNaiveGD(qProb, Xcurr, iters; eps=1e-12)
-		# TODO: Implement
+	"""
+		symQuadNaiveGD(qProb, Xcurr, iters, sSize; eps=1e-12)
+
+	Solve a symmetrized quadratic sensing problem using "naive" gradient
+	descent, given initial estimate `Xcurr` and a step size schedule `sSize`,
+	which can be either a number or a callable accepting the iteration number
+	as its argument.
+	"""
+	function symQuadNaiveGD(qProb, Xcurr, iters, sStep; eps=1e-12)
+		# note: sStep is either a callable or a Number
+		stepSize = Utils.setupStep(sStep)
+		dist = fill(0.0, iters); Xtrue = qProb.X
+		for k = 1:iters
+			dist[k] = Utils.norm_mat_dist(Xcurr * Xcurr', Xtrue * Xtrue')
+			broadcast!(-, Xcurr, Xcurr, stepSize(k) * symQuadGrad(qProb, Xcurr))
+			if dist[k] <= eps
+				return Xcurr, dist[1:k]
+			end
+		end
+		return Xcurr, dist
+	end
+
+
+	"""
+		symQuadNaiveGD_init(qProb, delta, iters, sSize; eps=1e-12)
+
+	Solve a symmetrized quadratic sensing problem using "naive" gradient
+	descent, forming its initial estimate by taking a small random direction
+	away from the ground truth, given a step size schedule `sSize` which can be
+	either a number or a callable accepting the iteration number as its argument.
+	"""
+	function symQuadNaiveGD_init(qProb, delta, iters, sStep; eps=1e-12)
+		Xtrue = qProb.X; d, r = size(Xtrue)
+        randDir = randn(d, r); randDir = randDir / norm(randDir)
+        Xinit = Xtrue + delta * randDir * norm(Xtrue)
+		return symQuadNaiveGD(qProb, Xinit, iters, sStep, eps=eps)
 	end
 
 
@@ -263,8 +297,49 @@ module CompOpt
 	end
 
 
-	function bilinNaiveGD(bProb, Ucurr, Vcurr, iters; eps=1e-12)
-		# TODO: Implement
+	"""
+		bilinNaiveGD(bProb, Ucurr, Vcurr, iters, sSize; eps=1e-12)
+
+	Solve a bilinear sensing problem using "naive" gradient descent, given
+	initial estimates `Ucurr, Vcurr` and a step size schedule `sSize`, which
+	can be either a number or a callable accepting the iteration number as its
+	argument.
+	"""
+	function bilinNaiveGD(bProb, Ucurr, Vcurr, iters, sSize; eps=1e-12)
+		stepSize = Utils.setupStep(sSize)
+		d1, r = size(Ucurr); d2, r = size(Vcurr)
+		Mtrue = bProb.W * bProb.X'
+		gradU = fill(0.0, (d1, r)); gradV = fill(0.0, (d2, r))
+        dist = fill(0.0, iters)
+        for i = 1:iters
+            dist[i] = Utils.norm_mat_dist(Ucurr * Vcurr', Mtrue)
+			if dist[i] <= eps
+				return Ucurr, Vcurr, dist[1:i]
+			end
+            gradU[:], gradV[:] = bilinGrad(bProb, Ucurr, Vcurr)
+			broadcast!(-, Ucurr, Ucurr, stepSize(i) * gradU)
+			broadcast!(-, Vcurr, Vcurr, stepSize(i) * gradV)
+        end
+        return Ucurr, Vcurr, dist
+	end
+
+
+	"""
+		bilinNaiveGD_init(bProb, delta, iters, sSize; eps=1e-12)
+
+	Solve a bilinear sensing problem using "naive" gradient descent, forming
+	initial estimates by taking a small random direction away from the ground
+	truth, given a step size schedule `sSize` which can be either a number or
+	a callable accepting the iteration number as its argument.
+	"""
+	function bilinNaiveGD_init(bProb, delta, iters, sSize; eps=1e-12)
+		Wtrue = bProb.W; Xtrue = bProb.X
+		d1, r = size(Wtrue); d2, r = size(Xtrue)
+		randW = randn(d1, r); randW /= norm(randW)
+		randX = randn(d2, r); randX /= norm(randX)
+		Uinit = Wtrue + delta * randW * norm(Wtrue)
+		Vinit = Xtrue + delta * randX * norm(Xtrue)
+        return bilinNaiveGD(bProb, Uinit, Vinit, iters, sSize, eps=eps)
 	end
 
 
