@@ -156,7 +156,8 @@ module Utils
 			G = fill(0.0, size(X))
 		end
 		P = X * Y' + Y * X' - Z
-		# TODO: Complete
+		G = sign(P) .* (2 * X)
+		# TODO: Finish
 	end
 
 

@@ -54,6 +54,7 @@ module CompOpt
 	# matrix completion
 	struct MatCompProb
 		X :: Array{Float64, 2}
+		M :: Array{Float64, 2}
 		mask :: Array{Number, 2}
 		p :: Float64
 	end
@@ -130,9 +131,9 @@ module CompOpt
 		X = Utils.genIncoherentMatrix(d, r)
 		# equalize singular values according to paper
 		svdObj = svd(X); S = svdObj.S; S[:] = ones(length(S)) * median(S)
-		X = svdObj.U * S * svdObj.Vt  # reform X
+		X = svdObj.U * (S .* svdObj.Vt)  # reform X
 		mask = Utils.genMask(d, sample_freq)
-		return MatCompProb(X, mask, sample_freq)
+		return MatCompProb(X, X * X', mask, sample_freq)
 	end
 
 
@@ -368,6 +369,57 @@ module CompOpt
 
 
 	"""
+		matCompSubgrad(prob::MatCompProb, Xcurr)
+
+	Compute a subgradient of the PSD matrix completion problem at the current
+	estimate `Xcurr`.
+	"""
+	function matCompSubgrad(prob::MatCompProb, Xcurr)
+		P = prob.mask
+		T0 = (Xcurr * Xcurr' - prob.M); T1 = P .* T0; T2 = P' .* T0
+		if all(T0 .== 0)
+			return T0
+		else
+			return (T1 * Xcurr / norm(T2)) + (T1' * Xcurr / norm(T1))
+		end
+	end
+
+
+	"""
+		matCompGrad(prob::MatCompProb, Xcurr)
+
+	Compute the "naive" gradient of the PSD matrix completion problem at the
+	current estimate `Xcurr`.
+	"""
+	function matCompGrad(prob::MatCompProb, Xcurr)
+		P = prob.mask
+		T0 = (Xcurr * Xcurr' - prob.M); T1 = P .* T0
+		return  2 * (T1 * Xcurr + T1' * Xcurr)
+	end
+
+
+	"""
+		matCompNaiveGD(prob::MatCompProb, Xcurr, iters, sSize; eps=1e-12)
+
+	Solve a PSD matrix completion problem using "naive" gradient descent on a
+	squared Frobenius formulation, given a step size `sSize` which is either a
+	number or a callable accepting the iteration number as its argument.
+	"""
+	function matCompNaiveGD(prob::MatCompProb, Xcurr, iters, sSize; eps=1e-12)
+		stepSize = Utils.setupStep(sSize)
+		dist = fill(0.0, iters)
+		for i = 1:iters
+			dist[i] = Utils.norm_mat_dist(Xcurr * Xcurr', prob.M)
+			if dist[i] <= eps
+				return Xcurr, dist[1:i]
+			end
+			broadcast!(-, Xcurr, Xcurr, stepSize(i) * matCompGrad(prob, Xcurr))
+		end
+		return Xcurr, dist
+	end
+
+
+	"""
 		nEuclidRpcaGrad(prob::RpcaProb, Xcurr)
 
 	Compute the naive gradient at `Xcurr` for the non-euclidean robust pca
@@ -470,6 +522,28 @@ module CompOpt
     end
 
 
+	"""
+		pSgd(prob::MatCompProb, Xinit, iters; λ=1.0, rho=0.98, eps=1e-10)
+
+	Apply the projected subgradient method with geometrically decaying step
+	to the matrix completion problem for `iters` iterations, given a problem
+	instance `prob` and an initial estimate `Xinit`.
+	"""
+	function pSgd(prob::MatCompProb, Xinit, iters; λ=1.0, rho=0.98, eps=1e-10)
+		q = λ; dist = fill(0.0, iters); grad = fill(0.0, size(Xinit))
+		for i = 1:iters
+			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', prob.M)
+			if dist[i] <= eps
+				return Xinit, dist[1:i]
+			end
+			grad[:] = matCompSubgrad(prob, Xinit)
+			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
+			q = q * rho
+		end
+		return Xinit, dist
+	end
+
+
     """
         pSgd_init(qProb::Union{SymQuadProb, QuadProb}, iters, delta; λ=1.0, rho=0.98)
 
@@ -499,5 +573,20 @@ module CompOpt
 		Uinit = Wtrue + delta * randW * norm(Wtrue)
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
         return pSgd(bProb, Uinit, Vinit, iters, λ=λ, rho=rho, eps=eps)
+    end
+
+
+	"""
+		pSgd_init(prob::MatCompProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10)
+
+	Apply the projected subgradient method with artifical "good" initialization
+	to a PSD matrix completion problem.
+	"""
+	function pSgd_init(prob::MatCompProb, iters, delta;
+					   λ=1.0, rho=0.98, eps=1e-10)
+        Xtrue = prob.X; d, r = size(Xtrue)
+        randDir = randn(d, r); randDir = randDir / norm(randDir)
+        Xinit = Xtrue + delta * randDir * norm(Xtrue)
+        return pSgd(prob, Xinit, iters, λ=λ, rho=rho, eps=eps)
     end
 end
