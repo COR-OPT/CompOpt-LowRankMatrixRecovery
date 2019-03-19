@@ -51,6 +51,14 @@ module CompOpt
 	end
 
 
+	# matrix completion
+	struct MatCompProb
+		X :: Array{Float64, 2}
+		mask :: Array{Number, 2}
+		p :: Float64
+	end
+
+
 	#= squared norm shortcut =#
 	sqnorm(x) = norm(x)^2
 
@@ -109,6 +117,22 @@ module CompOpt
 		S = Utils.genSparseMatrix(d, r, corr_lvl)
 		W = X * X' + S
 		return RpcaProb(W, X, S, 2 * Utils.abNorm(X, Inf, 2), corr_lvl)
+	end
+
+
+	"""
+		genMatCompProb(d, r, sample_freq=1.0)
+
+	Generate a matrix completion problem in dimensions ``d \\times r`` where
+	elements are sampled with `sample_freq` frequency.
+	"""
+	function genMatCompProb(d, r, sample_freq=1.0)
+		X = Utils.genIncoherentMatrix(d, r)
+		# equalize singular values according to paper
+		svdObj = svd(X); S = svdObj.S; S[:] = ones(length(S)) * median(S)
+		X = svdObj.U * S * svdObj.Vt  # reform X
+		mask = Utils.genMask(d, sample_freq)
+		return MatCompProb(X, mask, sample_freq)
 	end
 
 

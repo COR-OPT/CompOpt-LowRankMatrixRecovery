@@ -19,6 +19,19 @@ module Utils
     end
 
 
+	"""
+		genMask(d, p)
+
+	Generate a uniformly-at-random chosen subset of indices satisfying
+	``1 \\leq i, j \\leq d`` such that the probability of each index being
+	chosen is ``p``. Returns a ``d \\times d`` 0-1 matrix, where nonzero
+	elements represent positive samples.
+	"""
+	function genMask(d, p)
+		bernoulli(z) = trunc(Int, rand() <= z)
+		return map(x -> bernoulli(p), ones(d, d))
+	end
+
     """
         corrupt_measurements!(y, noise_lvl, noise=:gaussian)
 
