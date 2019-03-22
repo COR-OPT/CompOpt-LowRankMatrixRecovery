@@ -128,7 +128,8 @@ module Utils
     problem to ``n`` independent problems, one per row.
     """
     function matProj_2inf(A, gamma)
-        return mapslices(x -> gamma * x / norm(x), A, dims=[2])
+		projBall = (x -> (norm(x) < gamma) ? x : (gamma * x / norm(x)))
+        return mapslices(projBall, A, dims=[2])
     end
 
 
