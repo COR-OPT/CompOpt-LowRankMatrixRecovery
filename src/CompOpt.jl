@@ -9,7 +9,7 @@ module CompOpt
     using LinearAlgebra
     using Random
     using Statistics
-
+	using SparseArrays
 
 	# quadratic sensing problem
     struct QuadProb
@@ -358,7 +358,6 @@ module CompOpt
         return Ucurr, Vcurr, dist
 	end
 
-
 	"""
 		bilinNaiveGD_init(bProb, delta, iters, sSize; eps=1e-12)
 
@@ -376,7 +375,9 @@ module CompOpt
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
         return bilinNaiveGD(bProb, Uinit, Vinit, iters, sSize, eps=eps)
 	end
-
+# --------------------------------------
+# Matrix completion
+# --------------------------------------
 
 	"""
 		matCompSubgrad(prob::MatCompProb, Xcurr)
@@ -427,7 +428,83 @@ module CompOpt
 		end
 		return Xcurr, dist
 	end
+	function matCompInternalSolver(prob::MatCompProb, W, Xcurr, maxIter, ϵ, ρ;eps = 1e-12)
+		p = prob.p;
+		t = 1;
+		a = t*sqrt(p*(1+ϵ))
+		b = t*sqrt(p*ϵ)
+		d, r = size(Xcurr)
+		m = nnz(sparse(prob.mask))
+		λ = ones(d*r,1)
+		ν = ones(m,1)
+		w = zeros(m,1)
+		x = reshape(Xcurr,d*r,1)
+		z = -x
+		Diff = prob.M - Xcurr*Xcurr'
+		y = Diff[prob.mask .> 0]
+		XkI = kron(Xcurr, zeros(d,d)+UniformScaling(1))
+		A = W*XkI
 
+		# L = cholesky(zeros(d*r,d*r)+UniformScaling(1) + A'*A)
+		Q = zeros(d*r,d*r)+UniformScaling(1) + A'*A
+		for ii = 1:maxIter
+			nz = norm(z - λ)
+			if nz < 1e-10
+				zp1 = zeros(d*r,1)
+			else
+				zp1 = max(ρ*nz-a,0)*(z-λ)/((2*b+ρ)*nz)
+			end
+			nw = norm(w-ν-y)
+			if nw < 1e-10
+				wp1 = zeros(m,1)
+			else
+				wp1 = max(nw-1/ρ,0)*(w-ν-y)/nw + y;
+			end
+			# zp = L\(L'\(zp1+λ+A'*(wp1+ν)))
+			zp = Q\(zp1+λ+A'*(wp1+ν))
+			wp = A*zp
+
+			λ = λ + zp1 - zp
+			ν = ν + wp1 - wp
+			res = norm(zp - z) + norm(wp - w)
+			z = zp
+			w = wp
+			if res < eps
+				break
+			end
+		end
+		return reshape(z+x,d,r)
+	end
+	function matCompProxLinear(prob::MatCompProb, Xcurr, maxIter, ϵ; eps = 1e-12)
+		dist = fill(0.0, maxIter)
+		d, r= size(Xcurr)
+		# mask = map(x->min(1,max(0,x)), prob:mask + prob:mask')
+		idx = findall(x->(x.>0),prob.mask)
+		m = nnz(sparse(prob.mask))
+		k1 = zeros(Int64, m,1)
+		k2 = zeros(Int64, m,1)
+		# ϵ = 0.5
+
+		for ii = 1:m
+			k1[ii] = LinearIndices(prob.mask)[idx[ii]]
+			k2[ii] = LinearIndices(prob.mask)[CartesianIndex(idx[ii][2], idx[ii][1])]
+		end
+		# indi = LinearIndices(prob.mask)[idx]
+		W = sparse([Array(1:m); Array(1:m)], vec([k1; k2]), ones(2*m), m, d^2);
+		for ii = 1:maxIter
+			dist[ii] = Utils.norm_mat_dist(Xcurr*Xcurr', prob.M)
+			if dist[ii] <= eps
+			end
+			# Xcurr = matCompInternalSolver(prob, W, Xcurr, maxIter, ϵ, log(1/dist[ii]))
+			Xcurr = matCompInternalSolver(prob, W, Xcurr, maxIter, ϵ, 1/m)
+		end
+		return Xcurr, dist
+	end
+
+
+# --------------------------------------
+# RPCA
+# --------------------------------------
 
 	#= Helper function for the cost of the prox-linear objective for RPCA =#
 	proxlin_rpca_cost(X, Xk, C, gamma) = begin
