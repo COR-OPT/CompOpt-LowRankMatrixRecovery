@@ -553,6 +553,42 @@ module CompOpt
 	end
 
 
+	"""
+		rpcaProxLin(prob::RpcaProb, Xk, C, iters; gamma=10.0, eta=0.1, maxIt=5000)
+
+	Solve a robust PCA instance using the prox-linear method for `iters`
+	iterations, given an upper bound `C` on the ``2,\\infty`` norm of the
+	solution. The parameter ``\\gamma`` is the scale of the norm penalty for
+	the proximal subproblems, ``\\eta`` is the step size of the subgradient
+	method used internally to solve each subproblem, while `maxIt` controls the
+	maximum number of iterations per subproblem.
+	"""
+	function rpcaProxLin(prob::RpcaProb, Xk, C, iters;
+						 eps=1e-12, gamma=10.0, eta=0.1, maxIt=5000)
+		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
+		step = Utils.setupStep(eta)
+		for i = 1:iters
+			dists[i] = norm(Yk * Yk' - M) / norm(M)
+			if dists[i] <= eps
+				return Yk, dists[1:i]
+			end
+			# perform a prox-step
+			Yk[:] = rpcaStep(prob, Yk, C, gamma=gamma, eta=step(i), maxIt=maxIt)
+		end
+		return Yk, dists
+	end
+
+
+	function rpcaProxLin_init(prob::RpcaProb, delta, iters;
+							  eps=1e-12, gamma=10.0, eta=0.01, maxIt=1000)
+		Xtrue = prob.X; d, r = size(Xtrue)
+		randDir = randn(d, r); randDir = randDir / norm(randDir)
+		Xinit = Xtrue + delta * randDir * norm(Xtrue)
+		Xnorm = Utils.abNorm(Xtrue, Inf, 2)
+		return rpcaProxLin(prob, Xinit, 2 * Xnorm, iters,
+						   eps=eps, gamma=gamma, eta=eta, maxIt=maxIt)
+	end
+
     """
         pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
 
