@@ -42,6 +42,41 @@ function quad_experiment(d, i, r, iters, delta, reps;
 end
 
 
+#= set up a robust pca experiment =#
+function rpca_experiment(d, r, iters, delta, reps; success_eps=1e-5)
+	# step size schedule, after tinkering with varying steps
+	stepSched = (i -> (i <= iters / 3) ? 4.0 : 2.0^(-i))
+	for corr_lvl = 0:0.05:0.95
+		success = 0
+		for k = 1:reps
+			prob = CompOpt.genRpcaProb(d, r, corr_lvl)
+			_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta, eta=stepSched,
+											 eps=success_eps, maxIt=2000)
+			success += (ds[end] <= success_eps) ? 1 : 0
+		end
+		@printf("%d, %.3f, %.2f\n", r, corr_lvl, success / reps)
+	end
+end
+
+#= set up a matrix completion experiment =#
+function matcomp_experiment(d, r, iters, delta, reps;
+							success_eps=1e-5, algo=:subgrad)
+	for sample_freq = 0:0.025:0.975
+		success = 0
+		for k = 1:reps
+			prob = CompOpt.genMatCompProb(d, r, sample_freq)
+			if algo == :subgrad
+				_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=success_eps)
+			else
+				_, ds = CompOpt.matCompProxLinear_init(prob, iters, delta, eps=success_eps)
+			end
+			success += (ds[end] <= success_eps) ? 1 : 0
+		end
+		@printf("%d, %.3f, %.2f\n", r, sample_freq, success / reps)
+	end
+end
+
+
 function main()
 	# parse arguments
 	s = ArgParseSettings(description="""
@@ -71,10 +106,23 @@ function main()
 				"""
 				The type of the problem. `quadratic` results in a quadratic problem,
 				`sym_quadratic` in a quadratic problem with symmetrized measurements,
-				and `bilinear` results in a bilinear problem."""
+				and `bilinear` results in a bilinear problem.
+				`matcomp` results in a matrix completion problem, while `rpca`
+				results in an instance of robust PCA."""
 			range_tester = (x -> lowercase(x) in [
-				"quadratic", "sym_quadratic", "bilinear"])
+				"quadratic", "sym_quadratic", "bilinear", "matcomp", "rpca"])
 			default = "bilinear"
+		"--algo_type"
+			help =
+				"""
+				The iterative algorithm to be used. `subgradient` denotes the
+				subgradient method with geometrically decaying step size or
+				the Polyak step size when the minimum value is known. `proxlinear`
+				denotes the prox-linear method, tailored to the specific problem
+				at hand."""
+			range_tester = (x -> lowercase(x) in [
+				"subgradient", "proxlinear"])
+			default = "subgradient"
 		"--iters"
 			help = "The number of iterations for minimization"
 			arg_type = Int
@@ -102,6 +150,7 @@ function main()
 	d1, d2, r, rnd_seed = parsed["d1"], parsed["d2"], parsed["r"], parsed["seed"]
 	prob_type, iters, delta = parsed["prob_type"], parsed["iters"], parsed["delta"]
 	sdist, repeats = parsed["success_dist"], parsed["repeats"]
+	algo_type = parsed["algo_type"]
 	i = parsed["i"]
 	# seed RNG
 	Random.seed!(rnd_seed)
@@ -111,8 +160,14 @@ function main()
 	elseif prob_type == "sym_quadratic"
 		quad_experiment(d1, i, r, iters, delta, repeats, success_eps=sdist,
 						problem=:symmetrized)
-	else
+	elseif prob_type == "bilinear"
 		bilin_experiment(d1, d2, i, r, iters, delta, repeats, success_eps=sdist)
+	elseif prob_type == "matcomp"
+		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
+		matcomp_experiment(d1, r, iters, delta, repeats,
+						   success_eps=sdist, algo=algo)
+	else
+		rpca_experiment(d1, r, iters, delta, repeats, success_eps=sdist)
 	end
 end
 

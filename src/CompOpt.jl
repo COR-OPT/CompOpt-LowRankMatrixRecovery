@@ -428,7 +428,15 @@ module CompOpt
 		end
 		return Xcurr, dist
 	end
-	function matCompInternalSolver(prob::MatCompProb, W, Xcurr, maxIter, ϵ, ρ;eps = 1e-12)
+
+
+	"""
+		matCompInternalSolver(prob::MatCompProb, W, Xcurr, maxIter, ϵ, ρ; eps = 1e-12)
+
+	A graph splitting-based ADMM solver for the matrix completion prox-linear
+	method.
+	"""
+	function matCompInternalSolver(prob::MatCompProb, W, Xcurr, maxIter, ϵ, ρ; eps = 1e-12)
 		p = prob.p;
 		t = 1;
 		a = t*sqrt(p*(1+ϵ))
@@ -440,13 +448,12 @@ module CompOpt
 		w = zeros(m,1)
 		x = reshape(Xcurr,d*r,1)
 		z = -x
-		Diff = prob.M - Xcurr*Xcurr'
+		Diff = prob.M - Xcurr * Xcurr'
 		y = Diff[prob.mask .> 0]
-		XkI = kron(Xcurr, zeros(d,d)+UniformScaling(1))
+		XkI = kron(Xcurr, zeros(d,d) + UniformScaling(1))
 		A = W*XkI
 
-		# L = cholesky(zeros(d*r,d*r)+UniformScaling(1) + A'*A)
-		Q = zeros(d*r,d*r)+UniformScaling(1) + A'*A
+		Q = zeros(d*r, d*r) + UniformScaling(1) + A'*A
 		for ii = 1:maxIter
 			nz = norm(z - λ)
 			if nz < 1e-10
@@ -475,30 +482,48 @@ module CompOpt
 		end
 		return reshape(z+x,d,r)
 	end
+
+
+	"""
+		matCompProxLinear(prob::MatCompProb, Xcurr, maxIter, ϵ; eps=1e-12)
+
+	Solve a matrix completion problem instance from a starting iterate `Xcurr`
+	for `maxIter` iterations with a penalty parameter ``\\epsilon``.
+	"""
 	function matCompProxLinear(prob::MatCompProb, Xcurr, maxIter, ϵ; eps = 1e-12)
 		dist = fill(0.0, maxIter)
-		d, r= size(Xcurr)
-		# mask = map(x->min(1,max(0,x)), prob:mask + prob:mask')
+		d, r = size(Xcurr)
 		idx = findall(x->(x.>0),prob.mask)
 		m = nnz(sparse(prob.mask))
-		k1 = zeros(Int64, m,1)
-		k2 = zeros(Int64, m,1)
-		# ϵ = 0.5
-
+		k1 = zeros(Int64, m, 1)
+		k2 = zeros(Int64, m, 1)
 		for ii = 1:m
 			k1[ii] = LinearIndices(prob.mask)[idx[ii]]
 			k2[ii] = LinearIndices(prob.mask)[CartesianIndex(idx[ii][2], idx[ii][1])]
 		end
-		# indi = LinearIndices(prob.mask)[idx]
 		W = sparse([Array(1:m); Array(1:m)], vec([k1; k2]), ones(2*m), m, d^2);
 		for ii = 1:maxIter
 			dist[ii] = Utils.norm_mat_dist(Xcurr*Xcurr', prob.M)
 			if dist[ii] <= eps
+				return Xcurr, dist[1:ii]
 			end
-			# Xcurr = matCompInternalSolver(prob, W, Xcurr, maxIter, ϵ, log(1/dist[ii]))
 			Xcurr = matCompInternalSolver(prob, W, Xcurr, maxIter, ϵ, 1/m)
 		end
 		return Xcurr, dist
+	end
+
+
+	"""
+		matCompProxLinear_init(prob, delta, maxIter; ϵ=1.0, eps=1e-12)
+
+	Solve a matrix completion instance using the prox-linear method starting
+	at an iterate that is `delta`-close to the ground truth.
+	"""
+	function matCompProxLinear_init(prob::MatCompProb, maxIter, delta; ϵ=1.0, eps=1e-12)
+		Xtrue = prob.X; d, r = size(Xtrue)
+		randDir = randn(d, r); randDir = randDir / norm(randDir)
+		Xinit = Xtrue + delta * randDir * norm(Xtrue)
+		return matCompProxLinear(prob, Xinit, maxIter, ϵ, eps=eps)
 	end
 
 
@@ -564,7 +589,7 @@ module CompOpt
 	maximum number of iterations per subproblem.
 	"""
 	function rpcaProxLin(prob::RpcaProb, Xk, C, iters;
-						 eps=1e-12, gamma=10.0, eta=0.1, maxIt=5000)
+						 eps=1e-12, gamma=10.0, eta=(i -> 5.0 / sqrt(i)), maxIt=5000)
 		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
 		step = Utils.setupStep(eta)
 		for i = 1:iters
@@ -579,7 +604,7 @@ module CompOpt
 	end
 
 
-	function rpcaProxLin_init(prob::RpcaProb, delta, iters;
+	function rpcaProxLin_init(prob::RpcaProb, iters, delta;
 							  eps=1e-12, gamma=10.0, eta=0.01, maxIt=1000)
 		Xtrue = prob.X; d, r = size(Xtrue)
 		randDir = randn(d, r); randDir = randDir / norm(randDir)
