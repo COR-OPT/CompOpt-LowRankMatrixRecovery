@@ -61,7 +61,7 @@ end
 #= set up a matrix completion experiment =#
 function matcomp_experiment(d, r, iters, delta, reps;
 							success_eps=1e-5, algo=:subgrad)
-	for sample_freq = 0:0.025:0.975
+	for sample_freq = 0.02:0.02:0.6
 		success = 0
 		for k = 1:reps
 			prob = CompOpt.genMatCompProb(d, r, sample_freq)
