@@ -36,7 +36,7 @@ def phase_plot(xnum, ynum, save_name, noheader, *paths):
     axes[1].set_title(r"\( d = 100, r = 5 \)")
     axes[2].set_title(r"\( d = 100, r = 10 \)")
     fig.text(0.5, 0.0, "Corruption level", ha="center", va="center")
-    fig.text(0.25, 0.5, r"\( \frac{m}{2d} \)", ha="center", va="center",
+    fig.text(0.25, 0.5, r"\( m / 2d \)", ha="center", va="center",
              rotation="vertical")
 
     fig.tight_layout()  # needed for adjusting margins
