@@ -35,10 +35,11 @@ def phase_plot(xnum, ynum, save_name, noheader, *paths):
     axes[0].set_title(r"\( d = 100, r = 1 \)")
     axes[1].set_title(r"\( d = 100, r = 5 \)")
     axes[2].set_title(r"\( d = 100, r = 10 \)")
-    fig.text(0.5, 0.04, "Corruption level", ha="center", va="center")
-    fig.text(0.06, 0.5, r"\( m / (d_1 + d_2) \)", ha="center", va="center",
+    fig.text(0.5, 0.0, "Corruption level", ha="center", va="center")
+    fig.text(0.25, 0.5, r"\( \frac{m}{2d} \)", ha="center", va="center",
              rotation="vertical")
 
+    fig.tight_layout()  # needed for adjusting margins
     fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.88)
     # bbox_inches = 'tight' will remove margins
     plt.savefig(save_name, bbox_inches="tight")
