@@ -12,7 +12,7 @@ def setup_matplotlib():
 
 
 def phase_plot(path, save_name, noheader):
-    xnum, ynum = 40, 6
+    xnum, ynum = 30, 6
     nplots = 1
     values = np.zeros((nplots, xnum * ynum))
     # load data from file
@@ -21,9 +21,12 @@ def phase_plot(path, save_name, noheader):
 
     # setup indices, labels
     xidx, yidx = np.arange(xnum), np.arange(ynum)
-    ylabels = [1, 2, 4, 6, 8, 10]
-    xlabels = [str(i * 0.025) if idx % 10 == 0 else '' for idx, i in enumerate(xidx)]
-    xlabels[-1] = ('%.3f' % (xidx[-1] * 0.025))  # mark last x-value
+    ylabels = [1,2,4,8,16,32]
+    xlabels = [''] * 30
+    xlabels[0] = '0.02'
+    xlabels[9] = '0.20'
+    xlabels[19] = '0.40'
+    xlabels[29] = '0.60'
 
     # setup figure and save to .svg file
     plt.imshow(np.reshape(values[0, :], (ynum, xnum)), cmap='gray',
