@@ -3,7 +3,25 @@ module Utils
     using FFTW
     using LinearAlgebra
     using Random
+	using SparseArrays
     using Statistics
+
+
+	"""
+		commutator(m, n)
+
+	Compute the commutator matrix ``K^{m, n}``, which satisfies
+	``K^{m, n} \\text{vec}(A^T) = \\text{vec}(A)`` for any ``m \\times n``
+	matrix ``A``.
+	The matrix `K` returned by this method should satisfy
+	`K * vec(A) = vec(A').`
+	"""
+	function commutator(m, n)
+		return reshape(
+			sparse(kron(sparsevec(sparse(1.0I, m, m)), sparse(1.0I, n, n))),
+			m * n, m * n)
+	end
+
 
     """
         genMtx(d, n, r)
@@ -156,6 +174,48 @@ module Utils
         cVal = abNorm(X - Xk, 1, 2)
         return 2 * cVal * mapslices(dist_subg, X - Xk, dims=[2])
     end
+
+
+	function col_bin_search(t, V, norms)
+		# norms: assumed to be sorted in decreasing order
+		low = 1; high = size(V)[1]
+		while abs(low - high) > 1
+			mid = Int(floor((low + high) / 2))
+			if norms[mid] >= (t / (t * mid + 1)) * sum(norms[1:mid])
+				low = mid
+			else
+				high = mid
+			end
+		end
+		if abs(low - high) <= 1
+			if norms[high] >= (t / (t * high + 1)) * sum(norms[1:high])
+				return high
+			else
+				return low
+			end
+		end
+	end
+
+
+	"""
+		prox_sq21Norm(V, t)
+
+	Compute the proximal operator of ``X \\mapsto \\frac{\\| X \\|_{2,1}^2}{2}``
+	with prox-parameter ``t``.
+	"""
+	function prox_sq21Norm(V, t)
+		X_res = fill(0.0, size(V)...)
+		norms = vec(mapslices(norm, V, dims=[2]))
+		# sort rows in descending order
+		inds = sortperm(norms, rev=true)
+		k_max = col_bin_search(t, V, norms[inds])
+		factor = t / (t * k_max + 1)
+		for i = 1:k_max
+			X_res[i, :] = (1 - factor * (
+				sum(norms[inds][1:i]) / (norms[inds][i]))) * (V[inds, :][i, :])
+		end
+		return X_res[invperm(inds), :]
+	end
 
 
 	"""

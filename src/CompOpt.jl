@@ -431,6 +431,21 @@ module CompOpt
 
 
 	"""
+		matCompNaiveGD_init(prob::MatCompProb, delta, iters, sSize; eps=1e-12)
+
+	Solve a PSD matrix completion problem using "naive" gradient descent on a
+	squared Frobenius formulation, given a step size `sSize` which is either a
+	number or a callable accepting the iteration number as its argument.
+	Starts with an iterate `delta`-close to the ground truth.
+	"""
+	function matCompNaiveGD_init(prob::MatCompProb, delta, iters, sSize; eps=1e-12)
+		d, r = size(prob.X); rDir = randn(d, r); rDir /= norm(rDir)
+		Xinit = prob.X + delta * norm(prob.X) * rDir
+		return matCompNaiveGD(prob, Xinit, iters, sSize, eps=eps)
+	end
+
+
+	"""
 		matCompInternalSolver(prob::MatCompProb, W, Xcurr, maxIter, ϵ, ρ; eps = 1e-12)
 
 	A graph splitting-based ADMM solver for the matrix completion prox-linear
@@ -540,79 +555,132 @@ module CompOpt
 
 
 	"""
-		rpcaStep(prob::RpcaProb, Xk, C; gamma=10.0, eta=0.01, maxIt=5000)
+		ell21_prox(Xk, Z, Ztilde, C, ρ; gamma=10.0, maxIt=1000)
 
-	Compute an (approximate) prox-linear step of the non-euclidean robust PCA
-	formulation, given a current iterate `Xk`, an upper bound `C` on the
-	``\\ell_{2 \\to \\infty}`` norm of the estimates, and optional parameters:
-	- ``gamma``: the quadratic penalty parameter
-	- ``eta``: the step size
-	- `maxIt`: maximum number of iterations
-
-	Uses the subgradient method internally.
+	Computes the proximal operator of the ``\\ell_{2,1}`` norm of a matrix
+	by minimizing
+	``
+		\\frac{1}{2 \\gamma_k} \\| X - X_k \\|_{2,1}^2
+		+ \\frac{\\rho}{2} \\| X - (Z - \\tilde{Z}) \\|_F^2
+	``
 	"""
-	function rpcaStep(prob::RpcaProb, Xk, C; gamma=10.0, eta=0.01, maxIt=5000)
-		Yk = copy(Xk); Ybest = copy(Xk); minF = Inf
-		factC = Xk * Xk' + prob.W  # constant factor in 1-norm
-		fCost = (X -> proxlin_rpca_cost(X, Xk, factC, gamma))
-		Gquad = fill(0.0, size(Xk))  # (sub)gradient 1
-		Gnorm = fill(0.0, size(Xk))  # (sub)gradient 2
-		Gtot = fill(0.0, size(Xk))  # total
-		for i = 1:maxIt
-			# get quadratic penalty gradient
-			Gquad[:] = Utils.subg_sq21Norm(Yk, Xk)
-			rmul!(Gquad, 1 / gamma)
-			# Yk[:] = Yk[:] - (1 / gamma) * Gquad
-			# get subgradient of ell-1 elementwise norm
-			Gnorm[:] = 2 * sign.(Xk * Yk' + Yk * Xk' - factC) * Xk
-			Gtot[:] = Gquad + Gnorm;
-			# apply subgradient step
-			broadcast!(-, Yk, Yk, eta * Gtot / (norm(Gtot)^2))
-			# apply projection
-			Yk[:] = Utils.matProj_2inf(Yk, C)  # project back to C
-			if fCost(Yk) < minF
-				copyto!(Ybest, Yk); minF = fCost(Yk)  # update stuff
-			end
-		end
-		return Ybest
+	function ell21_prox(Xk, Zk, Lk, rho; gamma=10.0)
+		# f(x) = g(ax + b) -> prox_{λ f}(v) = prox_{λ g}(av + b) - b
+		# set b = -Xk to get below result
+		return Utils.prox_sq21Norm(Zk - Lk - Xk, 1 / (gamma * rho)) + Xk
+	end
+
+	# function ell21_prox(Xk, Zk, Lk, C, rho; gamma=10.0, maxIt=1000)
+	# 	Zdiff = Zk - Lk  # cache diff
+	# 	X = copy(Xk); eta = 1 / (5 * rho)
+	# 	for i = 1:maxIt
+	# 		X[:] = X - eta * ((Utils.subg_sq21Norm(X, Xk) / (2 * gamma)) + rho * (X - Zdiff))
+	# 		X[:] = Utils.matProj_2inf(X, C)
+	# 	end
+	# 	return X
+	# end
+
+	soft_thres(x, alpha) = sign.(x) .* max.(abs.(x) .- alpha, 0)
+
+
+	"""
+		matEll1_prox(YvecK, c, nuK, rho)
+
+	Computes the proximal operator for the matrix elementwise ell-1 norm given
+	the vectorized matrix YvecK.
+	"""
+	function matEll1_prox(YvecK, c, nuK, rho)
+		# soft thresholding operator for elemwise 1-norm
+		return c + soft_thres(YvecK - nuK - c, 1/rho)
 	end
 
 
 	"""
-		rpcaProxLin(prob::RpcaProb, Xk, C, iters; gamma=10.0, eta=0.1, maxIt=5000)
+		rpcaProxlinStep(prob, Xk, C, iters; gamma=10.0, gradIt=1000)
+
+	Apply the graph-splitting ADMM algorithm to perform one step of the
+	prox-linear algorithm applied to robust PCA, linearized around `Xk` and
+	under a ``\\ell_{2, \\infty}`` norm constraint given by `C`.
+	"""
+    function rpcaProxlinStep(prob::RpcaProb, Xk, C, iters;
+							 eps=1e-5, gamma=10.0, rho=5)
+		n, r = size(Xk); zsSize = n * r
+		# commutator matrix
+		K = Utils.commutator(n, r)
+		# linear transformation for ell1-subproblem
+		A = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
+		# PSD matrix for projection step
+		Lsys = UniformScaling(1) + A' * A
+		d1, d2 = size(A)  # required for Cinv
+		c = vec(Xk * Xk' + prob.W)
+		# dual variables
+		Lk = fill(0.0, (n, r)); Nk = fill(0.0, length(c))
+		Lnew = copy(Lk); Nnew = copy(Nk)
+		# primal variables
+		Zinit = fill(0.0, size(Xk)...); Yinit = fill(0.0, size(A * vec(Xk))...)
+		Znew = copy(Zinit); Ynew = copy(Yinit)
+		# vector to solve for in graph projection step
+		newSol = fill(0.0, n * r)
+		for i = 1:iters
+			# get proximal operators
+			Znew[:] = ell21_prox(Xk, Zinit, Lk, rho, gamma=gamma)
+			Ynew[:] = matEll1_prox(Yinit, c, Nk, rho)
+			copyto!(Zinit, Znew); copyto!(Yinit, Ynew)
+			# set the vector for graph splitting (rest is zeros)
+			Vnew = vec(Znew + Lk) + A' * (Ynew + Nk)
+			# update Znew by solving the linear system
+			copyto!(newSol, Lsys \ Vnew)
+			copyto!(Znew, reshape(newSol, n, r))
+			# upate Ynew by multipliing
+			copyto!(Ynew, A * newSol)
+			# update dual variables
+			copyto!(Lnew, Lk + (Zinit - Znew))
+			copyto!(Nnew, Nk + (Yinit - Ynew))
+			res = norm(Zinit - Znew) + norm(Yinit - Ynew)
+			if res < eps
+				return Znew, Ynew
+			else
+				copyto!(Lk, Lnew); copyto!(Nk, Nnew)
+			end
+		end
+		return Znew, Ynew
+	end
+
+
+	"""
+		rpcaProxLin(prob::RpcaProb, Xk, C, iters; eps=1e-12, gamma=10.0, maxIt=1000)
 
 	Solve a robust PCA instance using the prox-linear method for `iters`
 	iterations, given an upper bound `C` on the ``2,\\infty`` norm of the
 	solution. The parameter ``\\gamma`` is the scale of the norm penalty for
-	the proximal subproblems, ``\\eta`` is the step size of the subgradient
-	method used internally to solve each subproblem, while `maxIt` controls the
+	the proximal subproblems, while `maxIt` controls the
 	maximum number of iterations per subproblem.
 	"""
 	function rpcaProxLin(prob::RpcaProb, Xk, C, iters;
-						 eps=1e-12, gamma=10.0, eta=(i -> 5.0 / sqrt(i)), maxIt=5000)
+						 eps=1e-12, gamma=10.0, maxIt=1000, rho=0.1)
 		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
-		step = Utils.setupStep(eta)
 		for i = 1:iters
 			dists[i] = norm(Yk * Yk' - M) / norm(M)
 			if dists[i] <= eps
 				return Yk, dists[1:i]
 			end
 			# perform a prox-step
-			Yk[:] = rpcaStep(prob, Yk, C, gamma=gamma, eta=step(i), maxIt=maxIt)
+			Yk[:], _ = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho)
 		end
 		return Yk, dists
 	end
 
 
 	function rpcaProxLin_init(prob::RpcaProb, iters, delta;
-							  eps=1e-12, gamma=10.0, eta=0.01, maxIt=1000)
+							  eps=1e-8, gamma=10.0, maxIt=500, rho=0.1)
 		Xtrue = prob.X; d, r = size(Xtrue)
 		randDir = randn(d, r); randDir = randDir / norm(randDir)
 		Xinit = Xtrue + delta * randDir * norm(Xtrue)
 		Xnorm = Utils.abNorm(Xtrue, Inf, 2)
 		return rpcaProxLin(prob, Xinit, 2 * Xnorm, iters,
-						   eps=eps, gamma=gamma, eta=eta, maxIt=maxIt)
+						   eps=eps, gamma=gamma, maxIt=maxIt, rho=rho)
 	end
+
 
     """
         pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
