@@ -45,18 +45,19 @@ end
 #= set up a robust pca experiment =#
 function rpca_experiment(d, r, iters, delta, reps; success_eps=1e-5)
 	# step size schedule, after tinkering with varying steps
-	stepSched = (i -> (i <= iters / 3) ? 4.0 : 2.0^(-i))
-	for corr_lvl = 0:0.05:0.95
+	for corr_lvl = 0:0.05:0.45
 		success = 0
 		for k = 1:reps
 			prob = CompOpt.genRpcaProb(d, r, corr_lvl)
-			_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta, eta=stepSched,
-											 eps=success_eps, maxIt=2000)
+			_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta,
+											 eps=success_eps, inner_eps=1e-5,
+											 maxIt=500)
 			success += (ds[end] <= success_eps) ? 1 : 0
 		end
 		@printf("%d, %.3f, %.2f\n", r, corr_lvl, success / reps)
 	end
 end
+
 
 #= set up a matrix completion experiment =#
 function matcomp_experiment(d, r, iters, delta, reps;

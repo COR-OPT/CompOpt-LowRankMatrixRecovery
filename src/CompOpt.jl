@@ -611,7 +611,6 @@ module CompOpt
 		A = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
 		# PSD matrix for projection step
 		Lsys = UniformScaling(1) + A' * A
-		d1, d2 = size(A)  # required for Cinv
 		c = vec(Xk * Xk' + prob.W)
 		# dual variables
 		Lk = fill(0.0, (n, r)); Nk = fill(0.0, length(c))
@@ -619,27 +618,31 @@ module CompOpt
 		# primal variables
 		Zinit = fill(0.0, size(Xk)...); Yinit = fill(0.0, size(A * vec(Xk))...)
 		Znew = copy(Zinit); Ynew = copy(Yinit)
+		Zsol = copy(Zinit); Ysol = copy(Yinit)
 		# vector to solve for in graph projection step
 		newSol = fill(0.0, n * r)
 		for i = 1:iters
 			# get proximal operators
 			Znew[:] = ell21_prox(Xk, Zinit, Lk, rho, gamma=gamma)
 			Ynew[:] = matEll1_prox(Yinit, c, Nk, rho)
-			copyto!(Zinit, Znew); copyto!(Yinit, Ynew)
+			# copyto!(Zinit, Znew); copyto!(Yinit, Ynew)
 			# set the vector for graph splitting (rest is zeros)
 			Vnew = vec(Znew + Lk) + A' * (Ynew + Nk)
 			# update Znew by solving the linear system
 			copyto!(newSol, Lsys \ Vnew)
-			copyto!(Znew, reshape(newSol, n, r))
-			# upate Ynew by multipliing
-			copyto!(Ynew, A * newSol)
+			copyto!(Zsol, reshape(newSol, n, r))
+			# upate Ynew by multiplying
+			copyto!(Ysol, A * newSol)
 			# update dual variables
-			copyto!(Lnew, Lk + (Zinit - Znew))
-			copyto!(Nnew, Nk + (Yinit - Ynew))
-			res = norm(Zinit - Znew) + norm(Yinit - Ynew)
-			if res < eps
-				return Znew, Ynew
+			copyto!(Lnew, Lk + (Znew - Zsol))
+			copyto!(Nnew, Nk + (Ynew - Ysol))
+			resP = norm(Zsol - Znew)^2 + norm(Ysol - Ynew)^2
+			resD = (rho^2) * (norm(Zsol - Zinit)^2 + norm(Ysol - Yinit)^2)
+			if (resP < (eps * (sqrt(n * r) + max(norm(Zinit), norm(Yinit))))^2) &&
+			   (resD < (eps * (sqrt(n * r) + max(norm(Lnew), norm(Nnew))))^2)
+				return Zsol, Ysol
 			else
+				copyto!(Zinit, Zsol); copyto!(Yinit, Ysol)
 				copyto!(Lk, Lnew); copyto!(Nk, Nnew)
 			end
 		end
@@ -657,7 +660,8 @@ module CompOpt
 	maximum number of iterations per subproblem.
 	"""
 	function rpcaProxLin(prob::RpcaProb, Xk, C, iters;
-						 eps=1e-12, gamma=10.0, maxIt=1000, rho=0.1)
+						 eps=1e-8, gamma=10.0, maxIt=1000, rho=0.1,
+						 inner_eps=1e-3)
 		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
 		for i = 1:iters
 			dists[i] = norm(Yk * Yk' - M) / norm(M)
@@ -665,20 +669,30 @@ module CompOpt
 				return Yk, dists[1:i]
 			end
 			# perform a prox-step
-			Yk[:], _ = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho)
+			Yk[:], _ = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho,
+									   eps=(inner_eps / i))
 		end
 		return Yk, dists
 	end
 
 
+	"""
+		rpcaProxLin_init(prob, iters, delta; eps=1e-8, gamma=10.0, inner_eps=1e-3,
+						 maxIt=500, rho=nothing)
+
+	Solve a robust PCA instance using the prox-linear method for `iters`
+	iterations, starting at a point ``\\delta``-close to the ground truth.
+	"""
 	function rpcaProxLin_init(prob::RpcaProb, iters, delta;
-							  eps=1e-8, gamma=10.0, maxIt=500, rho=0.1)
+							  eps=1e-8, gamma=10.0, inner_eps=1e-3, maxIt=500,
+							  rho=5)
 		Xtrue = prob.X; d, r = size(Xtrue)
 		randDir = randn(d, r); randDir = randDir / norm(randDir)
 		Xinit = Xtrue + delta * randDir * norm(Xtrue)
 		Xnorm = Utils.abNorm(Xtrue, Inf, 2)
 		return rpcaProxLin(prob, Xinit, 2 * Xnorm, iters,
-						   eps=eps, gamma=gamma, maxIt=maxIt, rho=rho)
+						   eps=eps, gamma=gamma, maxIt=maxIt, rho=rho,
+						   inner_eps=inner_eps)
 	end
 
 
@@ -689,14 +703,22 @@ module CompOpt
     to the quadratic sensing problem for `iters` iterations, given a problem
     instance `qProb` and an initial estimate `Xinit`.
     """
-    function pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
+    function pSgd(qProb::QuadProb, Xinit, iters; λ=1.0, rho = 0.98, eps=1e-10)
         Xtrue = qProb.X; d, r = size(Xtrue); grad = fill(0.0, (d, r))
         q = λ; dist = fill(0.0, iters);
         for i = 1:iters
             dist[i] = Utils.norm_mat_dist(Xinit * Xinit', Xtrue * Xtrue')
+			if dist[i] <= eps
+				return Xinit, dist[1:i]
+			end
             grad[:] = quadSubgrad(qProb, Xinit)
-			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
-            q = q * rho
+			if qProb.pfail <= 1e-10
+				step = λ * quadRobustLoss(qProb, Xinit)
+				broadcast!(-, Xinit, Xinit, step * grad / (norm(grad)^2))
+			else
+				broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
+            	q = q * rho
+			end
         end
         return Xinit, dist
     end
@@ -718,9 +740,14 @@ module CompOpt
 			if dist[i] <= eps
 				return Xinit, dist[1:i]
 			end
-            grad[:] = symQuadSubgrad(qProb, Xinit)
-			broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
-            q = q * rho
+			grad[:] = symQuadSubgrad(qProb, Xinit)
+			if qProb.pfail <= 1e-10
+				step = λ * symQuadRobustLoss(qProb, Xinit)
+				broadcast!(-, Xinit, Xinit, step * grad / (norm(grad)^2))
+			else
+				broadcast!(-, Xinit, Xinit, q * grad / norm(grad))
+            	q = q * rho
+			end
         end
         return Xinit, dist
     end
@@ -745,9 +772,16 @@ module CompOpt
 				return Uinit, Vinit, dist[1:i]
 			end
             gradU[:], gradV[:] = bilinSubgrad(bProb, Uinit, Vinit)
-			broadcast!(-, Uinit, Uinit, q * gradU / norm(gradU))
-			broadcast!(-, Vinit, Vinit, q * gradV / norm(gradV))
-            q = q * rho
+			if bProb.pfail <= 1e-10
+				# need slightly smaller step for Polyak with bilinear
+				step = 0.5 * λ * bilinRobustLoss(bProb, Uinit, Vinit)
+				broadcast!(-, Uinit, Uinit, step * gradU / (norm(gradU)^2))
+				broadcast!(-, Vinit, Vinit, step * gradV / (norm(gradV)^2))
+			else
+				broadcast!(-, Uinit, Uinit, q * gradU / norm(gradU))
+				broadcast!(-, Vinit, Vinit, q * gradV / norm(gradV))
+            	q = q * rho
+			end
         end
         return Uinit, Vinit, dist
     end
