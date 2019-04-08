@@ -43,18 +43,29 @@ end
 
 
 #= set up a robust pca experiment =#
-function rpca_experiment(d, r, iters, delta, reps; success_eps=1e-5)
+function rpca_experiment(d, r, iters, delta, reps; success_eps=1e-5,
+	                     algo=:proxlin)
 	# step size schedule, after tinkering with varying steps
-	for corr_lvl = 0:0.05:0.45
+	for corr_lvl = 0:0.05:0.75
 		success = 0
 		for k = 1:reps
 			prob = CompOpt.genRpcaProb(d, r, corr_lvl)
-			_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta,
-											 eps=success_eps, inner_eps=1e-5,
-											 maxIt=500)
+			if algo == :proxlin
+				_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta,
+											     eps=success_eps, inner_eps=5e-5,
+											     maxIt=500)
+			else
+				_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=success_eps,
+				                          mode=:noneuclidean)
 			success += (ds[end] <= success_eps) ? 1 : 0
 		end
-		@printf("%d, %.3f, %.2f\n", r, corr_lvl, success / reps)
+		if success == 0   # no need to run subsequent experiments
+			for aux_lvl = corr_lvl:0.05:0.75
+				@printf("%d, %.3f, 0.0\n", r, corr_lvl)
+			end
+		else
+			@printf("%d, %.3f, %.2f\n", r, corr_lvl, success / reps)
+		end
 	end
 end
 
@@ -168,7 +179,9 @@ function main()
 		matcomp_experiment(d1, r, iters, delta, repeats,
 						   success_eps=sdist, algo=algo)
 	else
-		rpca_experiment(d1, r, iters, delta, repeats, success_eps=sdist)
+		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
+		rpca_experiment(d1, r, iters, delta, repeats, success_eps=sdist,
+		                algo=algo)
 	end
 end
 

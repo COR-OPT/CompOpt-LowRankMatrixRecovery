@@ -11,6 +11,8 @@ module CompOpt
     using Statistics
 	using SparseArrays
 
+#------
+# structs
 	# quadratic sensing problem
     struct QuadProb
         y :: Array{Float64, 1}
@@ -60,6 +62,9 @@ module CompOpt
 	end
 
 
+#--------
+# Problem generators
+
 	#= squared norm shortcut =#
 	sqnorm(x) = norm(x)^2
 
@@ -108,14 +113,22 @@ module CompOpt
 
 
 	"""
-		genRpcaProb(d, r, corr_lvl=0.0)
+		genRpcaProb(d, r, corr_lvl=0.0; sparse_signal=nothing)
 
 	Generates a robust pca problem in dimensions ``d \\times r`` where
-	a `corr_lvl` fraction of entries are outliers.
+	a `corr_lvl` fraction of entries are outliers. If `sparse_signal` is set,
+	treats it as the sparse corruption instead.
 	"""
-	function genRpcaProb(d, r, corr_lvl=0.0)
+	function genRpcaProb(d, r, corr_lvl=0.0; sparse_signal=nothing)
+		if sparse_signal != nothing
+			if isa(sparse_signal, Array{<:Number})
+				if size(sparse_signal) != (d, d)
+					throw(Exception("Size of sparse_signal incorrect!"))
+				end
+			end
+		end
 		X = Utils.genIncoherentMatrix(d, r)
-		S = Utils.genSparseMatrix(d, d, corr_lvl)
+		S = Utils.genSparseMatrix(d, d, corr_lvl, sMat=sparse_signal)
 		W = X * X' + S
 		return RpcaProb(W, X, S, 2 * Utils.abNorm(X, Inf, 2), corr_lvl)
 	end
@@ -136,6 +149,8 @@ module CompOpt
 		return MatCompProb(X, X * X', mask, sample_freq)
 	end
 
+#-------
+# Residuals and losses
 
     """
         quadRes(qProb, Xcurr)
@@ -176,6 +191,12 @@ module CompOpt
 	end
 
 
+	function symQuadNaiveLoss(qProb, Xcurr)
+		r = symQuadRes(qProb, Xcurr)
+		return (2 / length(r)) * (norm(r)^2)
+	end
+
+
     """
         quadRobustLoss(qProb, Xcurr)
 
@@ -213,6 +234,12 @@ module CompOpt
     end
 
 
+	function bilinNaiveLoss(bProb, Ucurr, Vcurr)
+		r = bilinRes(bProb, Ucurr, Vcurr)
+		return (2 / length(r)) * (norm(r)^2)
+	end
+
+
 	"""
 		matCompLoss(prob::MatCompProb, Xcurr)
 
@@ -222,6 +249,14 @@ module CompOpt
 		return norm(prob.mask .* (Xcurr * Xcurr' - prob.M))
 	end
 
+
+	function matCompNaiveLoss(prob::MatCompProb, Xcurr)
+		return norm(prob.mask .* (Xcurr * Xcurr' - prob.M))^2
+	end
+
+
+#-------
+# Quadratic sensing
 
     """
         quadSubgrad(qProb, Xcurr)
@@ -273,15 +308,22 @@ module CompOpt
 	which can be either a number or a callable accepting the iteration number
 	as its argument.
 	"""
-	function symQuadNaiveGD(qProb, Xcurr, iters, sStep; eps=1e-12)
+	function symQuadNaiveGD(qProb, Xcurr, iters, sStep;
+		                    eps=1e-12, use_polyak=false)
 		# note: sStep is either a callable or a Number
 		stepSize = Utils.setupStep(sStep)
 		dist = fill(0.0, iters); Xtrue = qProb.X
 		for k = 1:iters
 			dist[k] = Utils.norm_mat_dist(Xcurr * Xcurr', Xtrue * Xtrue')
-			broadcast!(-, Xcurr, Xcurr, stepSize(k) * symQuadGrad(qProb, Xcurr))
 			if dist[k] <= eps
 				return Xcurr, dist[1:k]
+			end
+			if use_polyak
+				grad = symQuadGrad(qProb, Xcurr)
+				err = symQuadNaiveLoss(qProb, Xcurr)
+				broadcast!(-, Xcurr, Xcurr, stepSize(k) * err * grad / (norm(grad)^2))
+			else
+				broadcast!(-, Xcurr, Xcurr, stepSize(k) * symQuadGrad(qProb, Xcurr))
 			end
 		end
 		return Xcurr, dist
@@ -296,13 +338,17 @@ module CompOpt
 	away from the ground truth, given a step size schedule `sSize` which can be
 	either a number or a callable accepting the iteration number as its argument.
 	"""
-	function symQuadNaiveGD_init(qProb, delta, iters, sStep; eps=1e-12)
+	function symQuadNaiveGD_init(qProb, delta, iters, sStep;
+		                         eps=1e-12, use_polyak=false)
 		Xtrue = qProb.X; d, r = size(Xtrue)
         randDir = randn(d, r); randDir = randDir / norm(randDir)
         Xinit = Xtrue + delta * randDir * norm(Xtrue)
-		return symQuadNaiveGD(qProb, Xinit, iters, sStep, eps=eps)
+		return symQuadNaiveGD(qProb, Xinit, iters, sStep, eps=eps,
+		                      use_polyak=use_polyak)
 	end
 
+#-------
+# Bilinear sensing
 
     """
         bilinSubgrad(bProb, Ucurr, Vcurr)
@@ -340,7 +386,8 @@ module CompOpt
 	can be either a number or a callable accepting the iteration number as its
 	argument.
 	"""
-	function bilinNaiveGD(bProb, Ucurr, Vcurr, iters, sSize; eps=1e-12)
+	function bilinNaiveGD(bProb, Ucurr, Vcurr, iters, sSize;
+		                  eps=1e-12, use_polyak=false)
 		stepSize = Utils.setupStep(sSize)
 		d1, r = size(Ucurr); d2, r = size(Vcurr)
 		Mtrue = bProb.W * bProb.X'
@@ -352,9 +399,15 @@ module CompOpt
 				return Ucurr, Vcurr, dist[1:i]
 			end
             gradU[:], gradV[:] = bilinGrad(bProb, Ucurr, Vcurr)
-			broadcast!(-, Ucurr, Ucurr, stepSize(i) * gradU)
-			broadcast!(-, Vcurr, Vcurr, stepSize(i) * gradV)
-        end
+			if use_polyak
+				err = bilinNaiveLoss(bProb, Ucurr, Vcurr)
+				broadcast!(-, Ucurr, Ucurr, err * stepSize(i) * gradU / (norm(gradU)^2))
+				broadcast!(-, Vcurr, Vcurr, err * stepSize(i) * gradV / (norm(gradV)^2))
+			else
+				broadcast!(-, Ucurr, Ucurr, stepSize(i) * gradU)
+				broadcast!(-, Vcurr, Vcurr, stepSize(i) * gradV)
+			end
+		end
         return Ucurr, Vcurr, dist
 	end
 
@@ -366,18 +419,21 @@ module CompOpt
 	truth, given a step size schedule `sSize` which can be either a number or
 	a callable accepting the iteration number as its argument.
 	"""
-	function bilinNaiveGD_init(bProb, delta, iters, sSize; eps=1e-12)
+	function bilinNaiveGD_init(bProb, delta, iters, sSize;
+		                       eps=1e-12, use_polyak=false)
 		Wtrue = bProb.W; Xtrue = bProb.X
 		d1, r = size(Wtrue); d2, r = size(Xtrue)
 		randW = randn(d1, r); randW /= norm(randW)
 		randX = randn(d2, r); randX /= norm(randX)
 		Uinit = Wtrue + delta * randW * norm(Wtrue)
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
-        return bilinNaiveGD(bProb, Uinit, Vinit, iters, sSize, eps=eps)
+        return bilinNaiveGD(bProb, Uinit, Vinit, iters, sSize,
+		                    eps=eps, use_polyak=use_polyak)
 	end
-# --------------------------------------
+
+
+#--------------------------------------
 # Matrix completion
-# --------------------------------------
 
 	"""
 		matCompSubgrad(prob::MatCompProb, Xcurr)
@@ -416,7 +472,8 @@ module CompOpt
 	squared Frobenius formulation, given a step size `sSize` which is either a
 	number or a callable accepting the iteration number as its argument.
 	"""
-	function matCompNaiveGD(prob::MatCompProb, Xcurr, iters, sSize; eps=1e-12)
+	function matCompNaiveGD(prob::MatCompProb, Xcurr, iters, sSize;
+							eps=1e-12, use_polyak=false)
 		stepSize = Utils.setupStep(sSize)
 		dist = fill(0.0, iters)
 		for i = 1:iters
@@ -424,7 +481,13 @@ module CompOpt
 			if dist[i] <= eps
 				return Xcurr, dist[1:i]
 			end
-			broadcast!(-, Xcurr, Xcurr, stepSize(i) * matCompGrad(prob, Xcurr))
+			if use_polyak
+				grad = matCompGrad(prob, Xcurr)
+				err = matCompNaiveLoss(prob, Xcurr)
+				broadcast!(-, Xcurr, Xcurr, stepSize(i) * err * grad / (norm(grad)^2))
+			else
+				broadcast!(-, Xcurr, Xcurr, stepSize(i) * matCompGrad(prob, Xcurr))
+			end
 		end
 		return Xcurr, dist
 	end
@@ -438,10 +501,12 @@ module CompOpt
 	number or a callable accepting the iteration number as its argument.
 	Starts with an iterate `delta`-close to the ground truth.
 	"""
-	function matCompNaiveGD_init(prob::MatCompProb, delta, iters, sSize; eps=1e-12)
+	function matCompNaiveGD_init(prob::MatCompProb, delta, iters, sSize;
+                                 eps=1e-12, use_polyak=false)
 		d, r = size(prob.X); rDir = randn(d, r); rDir /= norm(rDir)
 		Xinit = prob.X + delta * norm(prob.X) * rDir
-		return matCompNaiveGD(prob, Xinit, iters, sSize, eps=eps)
+		return matCompNaiveGD(prob, Xinit, iters, sSize,
+		                      eps=eps, use_polyak=use_polyak)
 	end
 
 
@@ -542,15 +607,35 @@ module CompOpt
 	end
 
 
-# --------------------------------------
+#-----
 # RPCA
-# --------------------------------------
 
 	#= Helper function for the cost of the prox-linear objective for RPCA =#
 	proxlin_rpca_cost(X, Xk, C, gamma) = begin
 		fcA = sum(abs.(X * Xk' + Xk * X' - C))
 		fcB = (1 / (2 * gamma)) * Utils.abNorm(X - Xk, 1, 2)
 		return fcA + fcB
+	end
+
+
+	"""
+		rpca_subgrad(prob::RpcaProb, Xk)
+
+	Return a subgradient of the non-euclidean rPCA problem at `Xk`.
+	"""
+	function rpca_subgrad(prob::RpcaProb, Xk)
+		return sign.(Xk * Xk' - prob.W) * Xk
+	end
+
+
+	"""
+		rpca_subgrad_euc(prob::RpcaProb, Xk, Sk)
+
+	Return a subgradient of the Euclidean rPCA problem at `(Xk, Sk)`.
+	"""
+	function rpca_subgrad_euc(prob::RpcaProb, Xk, Sk)
+		res = Xk * Xk' + Sk - prob.W
+		return (res * Xk + res' * Xk) / norm(res), res / norm(res)
 	end
 
 
@@ -570,15 +655,6 @@ module CompOpt
 		return Utils.prox_sq21Norm(Zk - Lk - Xk, 1 / (gamma * rho)) + Xk
 	end
 
-	# function ell21_prox(Xk, Zk, Lk, C, rho; gamma=10.0, maxIt=1000)
-	# 	Zdiff = Zk - Lk  # cache diff
-	# 	X = copy(Xk); eta = 1 / (5 * rho)
-	# 	for i = 1:maxIt
-	# 		X[:] = X - eta * ((Utils.subg_sq21Norm(X, Xk) / (2 * gamma)) + rho * (X - Zdiff))
-	# 		X[:] = Utils.matProj_2inf(X, C)
-	# 	end
-	# 	return X
-	# end
 
 	soft_thres(x, alpha) = sign.(x) .* max.(abs.(x) .- alpha, 0)
 
@@ -603,10 +679,12 @@ module CompOpt
 	under a ``\\ell_{2, \\infty}`` norm constraint given by `C`.
 	"""
     function rpcaProxlinStep(prob::RpcaProb, Xk, C, iters;
-							 eps=1e-5, gamma=10.0, rho=5)
+							 K=nothing, eps=1e-5, gamma=10.0, rho=5)
 		n, r = size(Xk); zsSize = n * r
 		# commutator matrix
-		K = Utils.commutator(n, r)
+		if K == nothing
+			K = Utils.commutator(n, r)
+		end
 		# linear transformation for ell1-subproblem
 		A = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
 		# PSD matrix for projection step
@@ -614,11 +692,11 @@ module CompOpt
 		c = vec(Xk * Xk' + prob.W)
 		# dual variables
 		Lk = fill(0.0, (n, r)); Nk = fill(0.0, length(c))
-		Lnew = copy(Lk); Nnew = copy(Nk)
 		# primal variables
 		Zinit = fill(0.0, size(Xk)...); Yinit = fill(0.0, size(A * vec(Xk))...)
 		Znew = copy(Zinit); Ynew = copy(Yinit)
 		Zsol = copy(Zinit); Ysol = copy(Yinit)
+		Vnew = fill(0.0, n * r)
 		# vector to solve for in graph projection step
 		newSol = fill(0.0, n * r)
 		for i = 1:iters
@@ -627,26 +705,26 @@ module CompOpt
 			Ynew[:] = matEll1_prox(Yinit, c, Nk, rho)
 			# copyto!(Zinit, Znew); copyto!(Yinit, Ynew)
 			# set the vector for graph splitting (rest is zeros)
-			Vnew = vec(Znew + Lk) + A' * (Ynew + Nk)
+			Vnew[:] = vec(Znew + Lk) + A' * (Ynew + Nk)
 			# update Znew by solving the linear system
-			copyto!(newSol, Lsys \ Vnew)
-			copyto!(Zsol, reshape(newSol, n, r))
+			newSol[:] = Lsys \ Vnew
+			Zsol[:] = reshape(newSol, n, r)
 			# upate Ynew by multiplying
-			copyto!(Ysol, A * newSol)
+			Ysol[:] = A * newSol
 			# update dual variables
-			copyto!(Lnew, Lk + (Znew - Zsol))
-			copyto!(Nnew, Nk + (Ynew - Ysol))
+			broadcast!(+, Lk, Lk, Znew - Zsol)
+			broadcast!(+, Nk, Nk, Ynew - Ysol)
+			# compute residuals
 			resP = norm(Zsol - Znew)^2 + norm(Ysol - Ynew)^2
 			resD = (rho^2) * (norm(Zsol - Zinit)^2 + norm(Ysol - Yinit)^2)
 			if (resP < (eps * (sqrt(n * r) + max(norm(Zinit), norm(Yinit))))^2) &&
-			   (resD < (eps * (sqrt(n * r) + max(norm(Lnew), norm(Nnew))))^2)
-				return Zsol, Ysol
+			   (resD < (eps * (sqrt(n * r) + max(norm(Lk), norm(Nk))))^2)
+				return Zsol
 			else
 				copyto!(Zinit, Zsol); copyto!(Yinit, Ysol)
-				copyto!(Lk, Lnew); copyto!(Nk, Nnew)
 			end
 		end
-		return Znew, Ynew
+		return Znew
 	end
 
 
@@ -663,14 +741,15 @@ module CompOpt
 						 eps=1e-8, gamma=10.0, maxIt=1000, rho=0.1,
 						 inner_eps=1e-3)
 		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
+		K = Utils.commutator(size(Xk)...)
 		for i = 1:iters
 			dists[i] = norm(Yk * Yk' - M) / norm(M)
 			if dists[i] <= eps
 				return Yk, dists[1:i]
 			end
 			# perform a prox-step
-			Yk[:], _ = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho,
-									   eps=(inner_eps / i))
+			Yk[:] = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho, K=K,
+									eps=(inner_eps / i))
 		end
 		return Yk, dists
 	end
@@ -695,6 +774,8 @@ module CompOpt
 						   inner_eps=inner_eps)
 	end
 
+#------
+# Subgradient wrappers
 
     """
         pSgd(qProb::QuadProb, Xinit, iters; λ = 1.0, rho = 0.98)
@@ -788,6 +869,76 @@ module CompOpt
 
 
 	"""
+		pSgd(prob::RpcaProb, Xinit, Sinit, iters; λ=1.0, rho=0.98, eps=1e-10)
+
+	Apply the projected subgradient method with geometrically decaying step
+	size to a robust PCA problem instance, starting from `Xinit` for `iters`
+	iterations.
+	"""
+	function pSgd_euc(prob::RpcaProb, Xinit, Sinit, iters;
+                      λ=1.0, rho=0.98, eps=1e-10)
+		q = λ; dist = fill(0.0, iters); M = prob.X * prob.X'
+		gradX = fill(0.0, size(Xinit)...); gradS = fill(0.0, size(Sinit)...)
+		for i = 1:iters
+			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', M)
+			if dist[i] <= eps
+				return Xinit, dist[1:i]
+			end
+			gradX, gradS = rpca_subgrad_euc(prob, Xinit, Sinit)
+			if prob.pfail <= 1e-10  # use Polyak step size
+				cost = norm(Xinit * Xinit' + Sinit - prob.W)
+				step = 0.75 * λ * cost
+				broadcast!(-, Xinit, Xinit, step * gradX / (norm(gradX)^2))
+				broadcast!(-, Sinit, Sinit, step * gradS / (norm(gradS)^2))
+			else
+				broadcast!(-, Xinit, Xinit, q * gradX / norm(gradX))
+				broadcast!(-, Sinit, Sinit, q * gradS / norm(gradS))
+			end
+			# project to {2,∞} ball
+			Xinit[:] = Utils.matProj_2inf(Xinit, prob.gamma)
+			# project to l1-norm ball
+			@inbounds for k = 1:(size(Sinit)[1])
+				Sinit[k, :] = Utils.l1Proj(Sinit[k, :], norm(prob.S[k, :], 1))
+			end
+			q = q * rho
+		end
+		return Xinit, Sinit, dist
+	end
+
+
+	"""
+		pSgd(prob::RpcaProb, Xinit, iters; λ=1.0, rho=0.98, eps=1e-10)
+
+	Apply the projected subgradient method with geometrically decaying step
+	size to a robust PCA problem instance, starting from `Xinit` for `iters`
+	iterations, using the non-Euclidean formulation.
+	"""
+	function pSgd_nEuc(prob::RpcaProb, Xinit, iters;
+                       λ=1.0, rho=0.98, eps=1e-10)
+		q = λ; dist = fill(0.0, iters); M = prob.X * prob.X'
+		gradX = fill(0.0, size(Xinit)...)
+		for i = 1:iters
+			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', M)
+			if dist[i] <= eps
+				return Xinit, dist[1:i]
+			end
+			gradX = rpca_subgrad(prob, Xinit)
+			if prob.pfail <= 1e-10  # use Polyak step size
+				cost = sum(abs.(Xinit * Xinit'  - prob.W))
+				step = 0.75 * λ * cost
+				broadcast!(-, Xinit, Xinit, step * gradX / (norm(gradX)^2))
+			else
+				broadcast!(-, Xinit, Xinit, q * gradX / norm(gradX))
+			end
+			# project to {2,∞} ball
+			Xinit[:] = Utils.matProj_2inf(Xinit, prob.gamma)
+			q = q * rho
+		end
+		return Xinit, dist
+	end
+
+
+	"""
 		pSgd(prob::MatCompProb, Xinit, iters; eta=1, eps=1e-10)
 
 	Apply the projected subgradient method with Polyak step size to the matrix
@@ -808,6 +959,8 @@ module CompOpt
 		return Xinit, dist
 	end
 
+#-------
+# PSGD with init
 
     """
         pSgd_init(qProb::Union{SymQuadProb, QuadProb}, iters, delta; λ=1.0, rho=0.98)
@@ -839,6 +992,31 @@ module CompOpt
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
         return pSgd(bProb, Uinit, Vinit, iters, λ=λ, rho=rho, eps=eps)
     end
+
+
+	"""
+		pSgd_init(prob::RpcaProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10)
+
+	Apply the projected subgradient method with artificial "good" initialization
+	to a robust PCA problem.
+	"""
+	function pSgd_init(prob::RpcaProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10,
+		               mode=:euclidean)
+		Xtrue = prob.X; d, r = size(Xtrue)
+		randDir = randn(d, r); randDir = randDir / norm(randDir)
+		Xinit = Xtrue + delta * randDir * norm(Xtrue)
+		if mode == :euclidean
+			randSDir = randn(d, d); randSDir = randSDir / norm(randSDir)
+			Sinit = prob.S + delta * randSDir * norm(prob.S)
+			# project
+			@inbounds for i = 1:d
+				Sinit[i, :] = Utils.l1Proj(Sinit[i, :], norm(prob.S[i, :], 1))
+			end
+			return pSgd_euc(prob, Xinit, Sinit, iters, λ=λ, rho=rho, eps=eps)
+		else
+			return pSgd_nEuc(prob, Xinit, iters, λ=λ, rho=rho, eps=eps)
+		end
+	end
 
 
 	"""

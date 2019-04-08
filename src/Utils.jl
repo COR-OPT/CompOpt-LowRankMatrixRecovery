@@ -126,6 +126,33 @@ module Utils
     end
 
 
+	"""
+		l1Proj(v, C)
+
+	Project a vector ``v`` to the ``\\ell_1``-norm ball scaled by a factor `C`.
+	"""
+	function l1Proj(v::Array{Float64, 1}, C)
+		if norm(v, 1) <= C
+			return v
+		end
+		x = abs.(v)  # make a copy using absolute values
+		U = collect(1:length(x)); s = 0; rho = 0
+		while length(U) > 0
+			k = Random.rand(U)
+			G = filter(i -> x[i] >= x[k], U)
+			L = filter(i -> x[i] < x[k], U)
+			Drho = length(G); Ds = sum(x[G])
+			if (s + Ds) - (rho + Drho) * x[k] < C
+				s += Ds; rho += Drho; U = L[:]
+			else
+				U = filter(i -> i != k, G)
+			end
+		end
+		theta = (s - C) / rho  # optimal coefficient for Lagrangian
+		return sign.(v) .* max.(abs.(v) .- theta, 0)
+	end
+
+
     """
         abNorm(A, a, b)
 
@@ -210,7 +237,7 @@ module Utils
 		inds = sortperm(norms, rev=true)
 		k_max = col_bin_search(t, V, norms[inds])
 		factor = t / (t * k_max + 1)
-		for i = 1:k_max
+		@inbounds for i = 1:k_max
 			X_res[i, :] = (1 - factor * (
 				sum(norms[inds][1:i]) / (norms[inds][i]))) * (V[inds, :][i, :])
 		end
@@ -266,11 +293,15 @@ module Utils
     Generates an arbitrary sparse corruption matrix of size ``d \\times r``
     with `corr_lvl` fraction of nonzero entries.
     """
-    function genSparseMatrix(d, r, corr_lvl)
+    function genSparseMatrix(d, r, corr_lvl; sMat=nothing)
         bernoulli(p) = trunc(Int, rand() <= p);
         # corruption matrix
-        indMat = map(x -> bernoulli(corr_lvl), ones(d, r))
-        S = 2 * randn(d, r)  # sparse corruption
-        return indMat .* S
+        indMat = map(x -> bernoulli(corr_lvl), zeros(d, r))
+		# sparse corruption
+		if sMat != nothing
+			return indMat .* sMat
+		else
+			return indMat .* randn(d, r)
+		end
     end
 end
