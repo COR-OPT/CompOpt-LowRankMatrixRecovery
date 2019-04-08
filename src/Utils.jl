@@ -17,9 +17,9 @@ module Utils
 	`K * vec(A) = vec(A').`
 	"""
 	function commutator(m, n)
-		return reshape(
-			sparse(kron(sparsevec(sparse(1.0I, m, m)), sparse(1.0I, n, n))),
-			m * n, m * n)
+		return sparse(reshape(
+			kron(sparsevec(sparse(1.0I, m, m)), sparse(1.0I, n, n)),
+			m * n, m * n))
 	end
 
 

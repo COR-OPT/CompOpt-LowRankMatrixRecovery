@@ -57,12 +57,14 @@ function rpca_experiment(d, r, iters, delta, reps; success_eps=1e-5,
 			else
 				_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=success_eps,
 				                          mode=:noneuclidean)
+			end
 			success += (ds[end] <= success_eps) ? 1 : 0
 		end
 		if success == 0   # no need to run subsequent experiments
 			for aux_lvl = corr_lvl:0.05:0.75
-				@printf("%d, %.3f, 0.0\n", r, corr_lvl)
+				@printf("%d, %.3f, 0.0\n", r, aux_lvl)
 			end
+			break  # break out of loop
 		else
 			@printf("%d, %.3f, %.2f\n", r, corr_lvl, success / reps)
 		end

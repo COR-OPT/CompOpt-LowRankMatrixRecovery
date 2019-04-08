@@ -678,27 +678,20 @@ module CompOpt
 	prox-linear algorithm applied to robust PCA, linearized around `Xk` and
 	under a ``\\ell_{2, \\infty}`` norm constraint given by `C`.
 	"""
-    function rpcaProxlinStep(prob::RpcaProb, Xk, C, iters;
+    function rpcaProxlinStep(prob::RpcaProb, Xk, C, iters,
+		                     Lk, Nk, Zinit, Znew, Zsol, Yinit, Ynew, Ysol,
+							 Vnew, newSol, Lsys, Lfact, c, A;
 							 K=nothing, eps=1e-5, gamma=10.0, rho=5)
 		n, r = size(Xk); zsSize = n * r
-		# commutator matrix
-		if K == nothing
-			K = Utils.commutator(n, r)
-		end
 		# linear transformation for ell1-subproblem
-		A = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
+		A[:] = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
 		# PSD matrix for projection step
-		Lsys = UniformScaling(1) + A' * A
-		c = vec(Xk * Xk' + prob.W)
-		# dual variables
-		Lk = fill(0.0, (n, r)); Nk = fill(0.0, length(c))
-		# primal variables
-		Zinit = fill(0.0, size(Xk)...); Yinit = fill(0.0, size(A * vec(Xk))...)
-		Znew = copy(Zinit); Ynew = copy(Yinit)
-		Zsol = copy(Zinit); Ysol = copy(Yinit)
-		Vnew = fill(0.0, n * r)
-		# vector to solve for in graph projection step
-		newSol = fill(0.0, n * r)
+		Lsys[:] = UniformScaling(1) + A' * A
+		Lfact[:] = sparse(cholesky(Lsys).L)
+		c[:] = vec(Xk * Xk' + prob.W)
+		# primal/dual variables
+		fill!(Zinit, 0.0); fill!(Yinit, 0.0)
+		fill!(Lk, 0.0); fill!(Nk, 0.0)
 		for i = 1:iters
 			# get proximal operators
 			Znew[:] = ell21_prox(Xk, Zinit, Lk, rho, gamma=gamma)
@@ -707,7 +700,7 @@ module CompOpt
 			# set the vector for graph splitting (rest is zeros)
 			Vnew[:] = vec(Znew + Lk) + A' * (Ynew + Nk)
 			# update Znew by solving the linear system
-			newSol[:] = Lsys \ Vnew
+			newSol[:] = Lfact' \ (Lfact \ Vnew)
 			Zsol[:] = reshape(newSol, n, r)
 			# upate Ynew by multiplying
 			Ysol[:] = A * newSol
@@ -724,7 +717,7 @@ module CompOpt
 				copyto!(Zinit, Zsol); copyto!(Yinit, Ysol)
 			end
 		end
-		return Znew
+		return Zsol
 	end
 
 
@@ -742,14 +735,33 @@ module CompOpt
 						 inner_eps=1e-3)
 		Yk = copy(Xk); dists = fill(0.0, iters); M = prob.X * prob.X'
 		K = Utils.commutator(size(Xk)...)
+		n, r = size(Xk)
+		# initialize variables
+		# linear transformation for ell1-subproblem
+		A = kron(Xk, sparse(1.0I, n, n)) + kron(sparse(1.0I, n, n), Xk) * K
+		# PSD matrix for projection step
+		Lsys = UniformScaling(1) + A' * A
+		Lfact = sparse(cholesky(Lsys).L)
+		c = vec(Xk * Xk' + prob.W)
+		# dual variables
+		Lk = fill(0.0, (n, r)); Nk = fill(0.0, length(c))
+		# primal variables
+		Zinit = fill(0.0, size(Xk)...); Yinit = fill(0.0, size(A * vec(Xk))...)
+		Znew = copy(Zinit); Ynew = copy(Yinit)
+		Zsol = copy(Zinit); Ysol = copy(Yinit)
+		Vnew = fill(0.0, n * r)
+		# vector to solve for in graph projection step
+		newSol = fill(0.0, n * r)
 		for i = 1:iters
 			dists[i] = norm(Yk * Yk' - M) / norm(M)
 			if dists[i] <= eps
 				return Yk, dists[1:i]
 			end
 			# perform a prox-step
-			Yk[:] = rpcaProxlinStep(prob, Yk, C, maxIt, rho=rho, K=K,
-									eps=(inner_eps / i))
+			Yk[:] = rpcaProxlinStep(prob, Yk, C, maxIt, Lk, Nk,
+			                        Zinit, Znew, Zsol, Yinit, Ynew, Ysol,
+									Vnew, newSol, Lsys, Lfact, c, A,
+									rho=rho, K=K, eps=(inner_eps / i))
 		end
 		return Yk, dists
 	end
