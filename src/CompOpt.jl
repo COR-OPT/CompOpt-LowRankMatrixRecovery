@@ -347,6 +347,107 @@ module CompOpt
 		                      use_polyak=use_polyak)
 	end
 
+
+	function _mk_XMat(qProb, Xk)
+		m = length(qProb.y)
+		return 2 .* vcat((kron(qProb.A1[i, :]' * Xk, qProb.A1[i, :]') - kron(
+			qProb.A2[i, :]' * Xk, qProb.A2[i, :]') for i=1:m)...)
+	end
+
+
+	function symQuadProxStep(qProb, Xk, Zinit, Zsol, Znew, Yinit, Ysol, Ynew,
+		Lk, Nk, Lsys, Lfact; γ=5, maxIt=2500, ρ=10, ϵ=1e-3)
+		# sizes to retrieve
+		szX = prod(size(qProb.X))
+		# store [vec(Uk); vec(Vk)]
+		Zk = vec(Xk); m = length(qProb.y); n = length(Zk)
+		c = vec(mapslices(sqnorm, qProb.A1 * Xk, dims=[2])) .- vec(
+			mapslices(sqnorm, qProb.A2 * Xk, dims=[2])) + qProb.y
+		A = _mk_XMat(qProb, Xk)  # => A * [vec(U); vec(V)]
+		Lsys[:] = 1.0I + A' * A   # linear system
+		Lfact[:] = cholesky(Lsys).L   # cached cholesky factor
+		Zinit[:] = Zk; Yinit[:] = A * Zk;
+		fill!(Lk, 0.0); fill!(Nk, 0.0)
+		for i = 1:maxIt
+			# Basic updates
+			Zsol[:] = 1 / ((1/γ) + ρ) * (ρ * (Zinit - Lk) + (1/γ) * Zk)
+			Ysol[:] = c + soft_thres(Yinit - Nk - c, 1/(ρ * m))
+			Vnew = (Zsol + Lk) + A' * (Ysol + Nk)
+			Znew[:] = Lfact' \ (Lfact \ Vnew)  # backsolve
+			Ynew[:] = A * Znew
+			broadcast!(+, Lk, Lk, Zsol - Znew)
+			broadcast!(+, Nk, Nk, Ysol - Ynew)
+			res_p = norm(vcat(Znew - Zsol, Ynew - Ysol))
+			res_d = ρ * norm(vcat(Zinit - Znew, Yinit - Ynew))
+			eps_p = ϵ * (sqrt(n) + max(norm(Znew), norm(Ynew)))
+			eps_d = ϵ * (sqrt(n) + max(norm(Lk), norm(Nk)))
+			if (res_p < eps_p) && (res_d < eps_d)
+				break;
+			else  # update estimates
+				Zinit[:] = Znew; Yinit[:] = Ynew
+			end
+		end
+		return reshape(Znew, size(Xk))
+	end
+
+
+	"""
+		symQuadProxlin(qProb, Xinit, iters, γ=5; maxIt=2000, ρ=nothing,
+					   ϵ=(i -> min(1e-4, 4.0^(-i))), eps=1e-10)
+
+	Run the prox-linear method for a symmetrized quadratic sensing problem
+	with initial estimate `Xinit` for `iters` iterations and prox-parameter
+	`γ`.
+	"""
+	function symQuadProxlin(qProb, Xinit, iters, γ=5; maxIt=500, ρ=10,
+		                    ϵ=1e-3, eps=1e-10)
+		Mtrue = qProb.X * qProb.X'
+		step = Utils.setupStep(ϵ)  # setup step size
+		# preallocate everything
+		Zinit = fill(0.0, size(vec(Xinit)))
+		Znew = copy(Zinit); Zsol = copy(Znew)
+		Yinit = fill(0.0, length(qProb.y))
+		Ynew = copy(Yinit); Ysol = copy(Ynew)
+		Lk = copy(Zinit); Nk = copy(Yinit)
+		A = _mk_XMat(qProb, Xinit)
+		Lsys = 1.0I + A' * A   # linear system
+		Lfact = cholesky(Lsys).L   # cached cholesky factor
+		dists = fill(0.0, iters)
+		for k = 1:iters
+			dists[k] = norm(Xinit * Xinit' - Mtrue) / norm(Mtrue)
+			if dists[k] <= eps
+				return Xinit, dists[1:k]
+			end
+			# solve a proximal subproblem
+			Xinit[:] = symQuadProxStep(
+				qProb, Xinit, Zinit, Zsol, Znew, Yinit, Ysol, Ynew, Lk, Nk,
+				Lsys, Lfact, γ=γ, ϵ=step(k), ρ=ρ, maxIt=maxIt)
+		end
+		return Xinit, dists
+	end
+
+
+	"""
+		symQuadProxlin_init(bProb, delta, iters; γ=5, maxIt=2000, ρ=nothing,
+					        ϵ=(i -> min(1e-4, 4.0^(-i))), eps=1e-10)
+
+	Run the prox-linear method for a symmetrized quadratic sensing problem
+	starting ``\\delta``-close to the optimal solution for `iters` iterations.
+	"""
+	function symQuadProxlin_init(qProb, delta, iters; γ=5, maxIt=2000,
+		                         ρ=nothing, ϵ=(i -> min(1e-4, 4.0^(-i))),
+								 eps=1e-10)
+		if (ρ == nothing)
+			ρ = 1 / length(qProb.y)
+		end
+		Xtrue = qProb.X
+		d, r = size(Xtrue); randX = randn(d, r); randX /= norm(randX)
+		Xinit = Xtrue + delta * randX * norm(Xtrue)
+		return symQuadProxlin(qProb, Xinit, iters, γ, maxIt=maxIt, ρ=ρ, ϵ=ϵ,
+		                      eps=eps)
+	end
+
+
 #-------
 # Bilinear sensing
 
@@ -429,6 +530,117 @@ module CompOpt
 		Vinit = Xtrue + delta * randX * norm(Xtrue)
         return bilinNaiveGD(bProb, Uinit, Vinit, iters, sSize,
 		                    eps=eps, use_polyak=use_polyak)
+	end
+
+
+	"""
+		_mkUVMats(bProb, Uk, Vk)
+
+	Make a large sparse block matrix for the graph-splitting ADMM subproblems.
+	"""
+
+	function _mk_UVMats(bProb, Uk, Vk)
+		m = length(bProb.y)
+		return hcat(
+			vcat((kron(bProb.B[i, :]' * Vk, bProb.A[i, :]') for i=1:m)...),
+			vcat((kron(bProb.A[i, :]' * Uk, bProb.B[i, :]') for i=1:m)...))
+	end
+
+
+	#= Implements one proximal step for bilinear prox-linear method =#
+	function bilinProxStep(bProb, Uk, Vk, Zinit, Zsol, Znew, Yinit, Ysol, Ynew,
+		Lk, Nk, Lsys, Lfact; γ=5, maxIt=2500, ρ=10, ϵ=1e-3)
+		# sizes to retrieve
+		szU = prod(size(bProb.W)); szV = prod(size(bProb.X))
+		# store [vec(Uk); vec(Vk)]
+		Zk = vcat(vec(Uk), vec(Vk)); m = length(bProb.y); n = length(Zk)
+		A = _mk_UVMats(bProb, Uk, Vk)  # => A * [vec(U); vec(V)]
+		c = Utils.rowwise_prod(bProb.A * Uk, bProb.B * Vk) + bProb.y
+		Lsys[:] = 1.0I + A' * A   # linear system
+		Lfact[:] = cholesky(Lsys).L   # cached cholesky factor
+		Zinit[:] = Zk; Yinit[:] = A * Zk
+		fill!(Lk, 0.0); fill!(Nk, 0.0)
+		for i = 1:maxIt
+			# Basic updates
+			Zsol[:] = 1 / ((1/γ) + ρ) * (ρ * (Zinit - Lk) + (1/γ) * Zk)
+			Ysol[:] = c + soft_thres(Yinit - Nk - c, 1/(ρ * m))
+			Vnew = (Zsol + Lk) + A' * (Ysol + Nk)
+			Znew[:] = Lfact' \ (Lfact \ Vnew)  # backsolve
+			Ynew[:] = A * Znew
+			broadcast!(+, Lk, Lk, Zsol - Znew)
+			broadcast!(+, Nk, Nk, Ysol - Ynew)
+			res_p = norm(vcat(Znew - Zsol, Ynew - Ysol))
+			res_d = ρ * norm(vcat(Zinit - Znew, Yinit - Ynew))
+			eps_p = ϵ * (sqrt(n) + max(norm(Znew), norm(Ynew)))
+			eps_d = ϵ * (sqrt(n) + max(norm(Lk), norm(Nk)))
+			if (res_p < eps_p) && (res_d < eps_d)
+				break;
+			else  # update estimates
+				Zinit[:] = Znew; Yinit[:] = Ynew
+			end
+		end
+		Unew = reshape(Znew[1:szU], size(Uk))
+		Vnew = reshape(Znew[(szU+1):end], size(Vk))
+		return Unew, Vnew
+	end
+
+
+	"""
+		bilinProxlin(bProb, Uinit, Vinit, iters, γ=5; maxIt=500, ρ=10,
+		             ϵ=1e-3, eps=1e-10)
+
+	Run the prox-linear method for a bilinear sensing problem with initial
+	estimates `Uinit, Vinit` for `iters` iterations and prox-parameter
+	γ.
+	"""
+	function bilinProxlin(bProb, Uinit, Vinit, iters, γ=5; maxIt=500, ρ=10,
+		                  ϵ=1e-3, eps=1e-10)
+		Mtrue = bProb.W * bProb.X'
+		step = Utils.setupStep(ϵ)  # setup step size
+		# preallocate everything
+		Zinit = fill(0.0, size(vcat(vec(Uinit), vec(Vinit))))
+		Znew = copy(Zinit); Zsol = copy(Znew)
+		Yinit = fill(0.0, length(bProb.y))
+		Ynew = copy(Yinit); Ysol = copy(Ynew)
+		Lk = copy(Zinit); Nk = copy(Yinit)
+		A = _mk_UVMats(bProb, Uinit, Vinit)  # => A * [vec(U); vec(V)]
+		Lsys = 1.0I + A' * A   # linear system
+		Lfact = cholesky(Lsys).L   # cached cholesky factor
+		dists = fill(0.0, iters)
+		for k = 1:iters
+			dists[k] = norm(Uinit * Vinit' - Mtrue) / norm(Mtrue)
+			if dists[k] <= eps
+				return Uinit, Vinit, dists[1:k]
+			end
+			# solve a proximal subproblem
+			Uinit[:], Vinit[:] = bilinProxStep(
+				bProb, Uinit, Vinit, Zinit, Zsol, Znew, Yinit, Ysol, Ynew,
+				Lk, Nk, Lsys, Lfact, γ=γ, ϵ=step(k), ρ=ρ, maxIt=maxIt)
+		end
+		return Uinit, Vinit, dists
+	end
+
+
+	"""
+		bilinProxlin_init(bProb, delta, iters; γ=5, maxIt=2000, ρ=nothing,
+					      ϵ=(i -> min(1e-4, 4.0^(-i))), eps=1e-10)
+
+	Run the prox-linear method for a bilinear sensing problem starting
+	``\\delta``-close to the optimal solution for `iters` iterations.
+	"""
+	function bilinProxlin_init(bProb, delta, iters; γ=5, maxIt=2000, ρ=nothing,
+		                       ϵ=(i -> min(1e-4, 4.0^(-i))), eps=1e-10)
+		if (ρ == nothing)
+			ρ = 1 / length(bProb.y)
+		end
+		Wtrue = bProb.W; Xtrue = bProb.X
+		d1, r = size(Wtrue); d2, r = size(Xtrue)
+		randW = randn(d1, r); randW /= norm(randW)
+		randX = randn(d2, r); randX /= norm(randX)
+		Uinit = Wtrue + delta * randW * norm(Wtrue)
+		Vinit = Xtrue + delta * randX * norm(Xtrue)
+		return bilinProxlin(bProb, Uinit, Vinit, iters, γ, maxIt=maxIt,
+		                    ρ=ρ, ϵ=ϵ, eps=eps)
 	end
 
 
@@ -753,7 +965,7 @@ module CompOpt
 		# vector to solve for in graph projection step
 		newSol = fill(0.0, n * r)
 		for i = 1:iters
-			dists[i] = norm(Yk * Yk' - M) / norm(M)
+			dists[i] = norm(Yk * Yk' - M, 1) / norm(M, 1)
 			if dists[i] <= eps
 				return Yk, dists[1:i]
 			end
@@ -930,13 +1142,13 @@ module CompOpt
 		q = λ; dist = fill(0.0, iters); M = prob.X * prob.X'
 		gradX = fill(0.0, size(Xinit)...)
 		for i = 1:iters
-			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', M)
+			dist[i] = norm(Xinit * Xinit' - M, 1) / norm(M, 1)
 			if dist[i] <= eps
 				return Xinit, dist[1:i]
 			end
 			gradX = rpca_subgrad(prob, Xinit)
 			if prob.pfail <= 1e-10  # use Polyak step size
-				cost = sum(abs.(Xinit * Xinit'  - prob.W))
+				cost = norm(Xinit * Xinit' - prob.W, 1)
 				step = 0.75 * λ * cost
 				broadcast!(-, Xinit, Xinit, step * gradX / (norm(gradX)^2))
 			else

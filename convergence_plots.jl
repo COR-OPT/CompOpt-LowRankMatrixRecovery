@@ -12,12 +12,17 @@ include("src/CompOpt.jl")
 zero_pad!(v, lenTotal) = append!(v, zeros(lenTotal - length(v)))
 
 #= bilinear sensing =#
-function bilin_experiment(d1, d2, iList, r, iters, delta, noise_lvl)
+function bilin_experiment(d1, d2, iList, r, iters, delta, noise_lvl;
+	                      algo=:subgrad)
 	df = DataFrame(k=collect(1:iters))
 	for i in iList
 		m = i * r * (d1 + d2)
 		prob = CompOpt.genBilinProb(d1, d2, m, r, noise_lvl)
-		_, _, ds = CompOpt.pSgd_init(prob, iters, delta, eps=1e-12)
+		if algo == :subgrad
+			_, _, ds = CompOpt.pSgd_init(prob, iters, delta, eps=1e-12)
+		else
+			_, _, ds = CompOpt.bilinProxlin_init(prob, delta, iters, eps=1e-12)
+		end
 		zero_pad!(ds, iters); df[Symbol("err_$(i)")] = ds
 	end
 	return df
@@ -25,7 +30,8 @@ end
 
 
 #= symmetrized quadratic sensing =#
-function quad_experiment(d, iList, r, iters, delta, noise_lvl; problem=:symmetrized)
+function quad_experiment(d, iList, r, iters, delta, noise_lvl; problem=:symmetrized,
+	                     algo=:subgrad)
 	df = DataFrame(k=collect(1:iters))
 	for i in iList
 		if problem == :symmetrized
@@ -34,7 +40,11 @@ function quad_experiment(d, iList, r, iters, delta, noise_lvl; problem=:symmetri
 			pGen = CompOpt.genQuadProb; m = i * (r^2) * d
 		end
 		prob = pGen(d, m, r, noise_lvl)
-		_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=1e-12)
+		if algo == :subgrad
+			_, ds = CompOpt.pSgd_init(prob, iters, delta, eps=1e-12)
+		else
+			_, ds = CompOpt.symQuadProxlin_init(prob, delta, iters, eps=1e-12)
+		end
 		zero_pad!(ds, iters); df[Symbol("err_$(i)")] = ds
 	end
 	return df
@@ -44,7 +54,7 @@ end
 #= matrix completion =#
 function matcomp_experiment(d, r, iters, delta; algo=:subgrad)
 	df = DataFrame(k=collect(1:iters))
-	for sample_freq in 0.025:0.025:0.25
+	for sample_freq in [0.05; 0.1; 0.15; 0.2]
 		prob = CompOpt.genMatCompProb(d, r, sample_freq)
 		if algo == :subgrad
 			_, ds = CompOpt.pSgd_init(prob, iters, delta)
@@ -52,6 +62,22 @@ function matcomp_experiment(d, r, iters, delta; algo=:subgrad)
 			_, ds = CompOpt.matCompProxLinear_init(prob, iters, delta)
 		end
 		zero_pad!(ds, iters); df[Symbol("err_$(sample_freq)")] = ds
+	end
+	return df
+end
+
+
+function rpca_experiment(d, r, iters, delta; algo=:subgrad)
+	df = DataFrame(k=collect(1:iters))
+	for corr_lvl in [0.0; 0.1; 0.2; 0.3; 0.4]
+		prob = CompOpt.genRpcaProb(d, r, corr_lvl)
+		if algo == :subgrad
+			_, ds = CompOpt.pSgd_init(prob, iters, delta, mode=:noneuclidean)
+		else
+			_, ds = CompOpt.rpcaProxLin_init(prob, iters, delta, inner_eps=1e-5,
+			                                 maxIt=750)
+		end
+		zero_pad!(ds, iters); df[Symbol("err_$(corr_lvl)_$(algo)")] = ds
 	end
 	return df
 end
@@ -132,21 +158,28 @@ function main()
 	Random.seed!(rnd_seed)
 	df = nothing;
 	if prob_type == "quadratic"
-		algo_type = "subgradient"
 		df = quad_experiment(d1, iList, r, iters, delta, corr_lvl, problem=:quadratic)
 	elseif prob_type == "sym_quadratic"
-		algo_type = "subgradient"
-		df = quad_experiment(d1, iList, r, iters, delta, corr_lvl, problem=:symmetrized)
+		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
+		df = quad_experiment(d1, iList, r, iters, delta, corr_lvl, problem=:symmetrized,
+		                     algo=algo)
 	elseif prob_type == "bilinear"
-		algo_type = "subgradient"
-		df = bilin_experiment(d1, d2, iList, r, iters, delta, corr_lvl)
+		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
+		df = bilin_experiment(d1, d2, iList, r, iters, delta, corr_lvl,
+		                      algo=algo)
 	elseif prob_type == "matcomp"
 		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
 		df = matcomp_experiment(d1, r, iters, delta, algo=algo)
 	else
-		throw(Exception("Not implemented yet"))
+		algo = (algo_type == "subgradient") ? :subgrad : :proxlin;
+		df = rpca_experiment(d1, r, iters, delta, algo=algo)
 	end
-	fname = "err_$(prob_type)_$(r)_$(algo_type).csv"
+	if (prob_type == "bilinear" || prob_type == "sym_quadratic" ||
+	    prob_type == "quadratic")
+		fname = "err_$(prob_type)_$(r)_$(algo_type)_$(corr_lvl).csv"
+	else
+		fname = "err_$(prob_type)_$(r)_$(algo_type).csv"
+	end
 	CSV.write(fname, df)
 end
 
