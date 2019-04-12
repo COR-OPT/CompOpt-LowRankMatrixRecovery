@@ -70,16 +70,24 @@ module CompOpt
 
 
 	"""
-		genSymQuadProb(d, m, r, noise_lvl=0.0)
+		genSymQuadProb(d, m, r, noise_lvl=0.0; denseLvl=0.0)
 
 	Generates a symmetrized quadratic sensing problem in dimensions
 	``d \\times n`` where ``\\rank(X) = r`` with a desired noise level.
+	If `denseLvl > 0`, adds dense gaussian noise.
 	"""
-	function genSymQuadProb(d, m, r, noise_lvl=0.0)
+	function genSymQuadProb(d, m, r, noise_lvl=0.0; denseLvl=0.0)
 		A1 = randn(m, d); A2 = randn(m, d); X = randn(d, r)
 		y = vec(mapslices(sqnorm, A1 * X, dims=[2]))
 		y = y - vec(mapslices(sqnorm, A2 * X, dims=[2]))
-		Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
+		if denseLvl <= 1e-12
+			Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
+		else
+			# add dense noise here
+			Utils.corrupt_measurements!(y, noise_lvl, :large_sparse)
+			e = randn(length(y)); e = (svdvals(X)[r]^2) * e / norm(e)
+			broadcast!(+, y, y, denseLvl * e)
+		end
 		return SymQuadProb(y, X, A1, A2, noise_lvl)
 	end
 
@@ -135,18 +143,25 @@ module CompOpt
 
 
 	"""
-		genMatCompProb(d, r, sample_freq=1.0)
+		genMatCompProb(d, r, sample_freq=1.0; denseLvl=0.0)
 
 	Generate a matrix completion problem in dimensions ``d \\times r`` where
 	elements are sampled with `sample_freq` frequency.
+	If `denseLvl > 0`, adds dense Gaussian noise.
 	"""
-	function genMatCompProb(d, r, sample_freq=1.0)
+	function genMatCompProb(d, r, sample_freq=1.0; denseLvl=0.0)
 		X = Utils.genIncoherentMatrix(d, r)
-		# equalize singular values according to paper
-		svdObj = svd(X); S = svdObj.S; S[:] = ones(length(S)) * median(S)
-		X = svdObj.U * (S .* svdObj.Vt)  # reform X
 		mask = Utils.genMask(d, sample_freq)
-		return MatCompProb(X, X * X', mask, sample_freq)
+		svdObj = svd(X); S = svdObj.S
+		S[:] = ones(length(S)) * median(S); X = svdObj.U * (S .* svdObj.Vt)
+		if denseLvl <= 1e-12
+			# equalize singular values according to paper
+			return MatCompProb(X, X * X', mask, sample_freq)
+		else
+			# equalize singular values according to paper
+			e = randn(d, d); e = sqrt(sample_freq) * (e / norm(e)) * (median(S)^2)
+			return MatCompProb(X, X * X' .+ e * denseLvl, mask, sample_freq)
+		end
 	end
 
 #-------
@@ -794,8 +809,9 @@ module CompOpt
 			k2[ii] = LinearIndices(prob.mask)[CartesianIndex(idx[ii][2], idx[ii][1])]
 		end
 		W = sparse([Array(1:m); Array(1:m)], vec([k1; k2]), ones(2*m), m, d^2);
+		Mtrue = prob.X * prob.X'   # just in case we have dense gaussian noise
 		for ii = 1:maxIter
-			dist[ii] = Utils.norm_mat_dist(Xcurr*Xcurr', prob.M)
+			dist[ii] = Utils.norm_mat_dist(Xcurr * Xcurr', Mtrue)
 			if dist[ii] <= eps
 				return Xcurr, dist[1:ii]
 			end
@@ -1171,8 +1187,9 @@ module CompOpt
 	"""
 	function pSgd(prob::MatCompProb, Xinit, iters; eta=1, eps=1e-10)
 		dist = fill(0.0, iters); grad = fill(0.0, size(Xinit))
+		Mtrue = prob.X * prob.X'
 		for i = 1:iters
-			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', prob.M)
+			dist[i] = Utils.norm_mat_dist(Xinit * Xinit', Mtrue)
 			if dist[i] <= eps
 				return Xinit, dist[1:i]
 			end

@@ -64,6 +64,9 @@ module Utils
         elseif noise == :sq_gaussian  # squared gaussian
             noise = randn(num_corr) .^ 2
             y[randperm(m)[1:num_corr]] += noise
+		elseif noise == :large_sparse  # large sparse corruption
+			noise = log(length(y)) * randn(num_corr)
+			y[randperm(m)[1:num_corr]] = noise[1:num_corr]
         end
     end
 
