@@ -112,10 +112,16 @@ module CompOpt
     Generates a bilinear sensing problem in dimensions ``d_1 \\times d_2``
     where ``\\rank(X) = r`` with a desired noise level.
     """
-    function genBilinProb(d1, d2, m, r, noise_lvl=0.0)
+    function genBilinProb(d1, d2, m, r, noise_lvl=0.0; denseLvl=0.0)
 		A = randn(m, d1); B = randn(m, d2); W = randn(d1, r); X = randn(d2, r)
 		y = Utils.rowwise_prod(A * W, B * X)  # row-wise dot product
-        Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
+		if denseLvl <= 1e-12
+			Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
+		else
+			Utils.corrupt_measurements!(y, noise_lvl, :large_sparse)
+			e = randn(length(y)); e = (svdvals(X)[r]^2) * e / norm(e)
+			broadcast!(+, y, y, denseLvl * e)
+		end
         return BilinProb(y, W, X, A, B, noise_lvl)
     end
 
@@ -659,6 +665,26 @@ module CompOpt
 	end
 
 
+	"""
+		proxlin_init(prob, delta, iters; γ=5, maxIt=2000, ρ=nothing,
+		             ϵ=(i -> min(1e-4, 4.0^(-i))), eps=1e-10)
+
+	Run the prox-linear method with initialization ``\\delta``-close to a
+	solution for the bilinear or symmetrized quadratic sensing problems for
+	`iters` iterations.
+	"""
+	function proxlin_init(prob::Union{SymQuadProb,BilinProb}, delta, iters;
+		                  γ=5, maxIt=2000, ρ=nothing, ϵ=(i -> min(1e-4, 4.0^(-i))),
+						  eps=1e-10)
+		if isa(prob, BilinProb)
+			return bilinProxlin_init(prob, delta, iters, γ=γ, maxIt=maxIt,
+			                         ρ=ρ, ϵ=ϵ, eps=eps)
+		else
+			return symQuadProxlin_init(prob, delta, iters, γ=γ, maxIt=maxIt,
+			                           ρ=ρ, ϵ=ϵ, eps=eps)
+		end
+	end
+
 #--------------------------------------
 # Matrix completion
 
@@ -835,6 +861,17 @@ module CompOpt
 	end
 
 
+	"""
+		proxlin_init(prob::MatCompProb, iters, delta; ϵ=1.0, eps=1e-12)
+
+	Run the modified prox-linear method for a matrix completion problem instance
+	initialized ``\\delta``-close to a solution for `iters` iterations.
+	"""
+	function proxlin_init(prob::MatCompProb, iters, delta; ϵ=1.0, eps=1e-12)
+		return matCompProxLinear_init(prob, iters, delta, ϵ=ϵ, eps=eps)
+	end
+
+
 #-----
 # RPCA
 
@@ -1004,14 +1041,28 @@ module CompOpt
 	"""
 	function rpcaProxLin_init(prob::RpcaProb, iters, delta;
 							  eps=1e-8, gamma=10.0, inner_eps=1e-3, maxIt=500,
-							  rho=5)
+							  ρ=5)
 		Xtrue = prob.X; d, r = size(Xtrue)
 		randDir = randn(d, r); randDir = randDir / norm(randDir)
 		Xinit = Xtrue + delta * randDir * norm(Xtrue)
 		Xnorm = Utils.abNorm(Xtrue, Inf, 2)
 		return rpcaProxLin(prob, Xinit, 2 * Xnorm, iters,
-						   eps=eps, gamma=gamma, maxIt=maxIt, rho=rho,
+						   eps=eps, gamma=gamma, maxIt=maxIt, rho=ρ,
 						   inner_eps=inner_eps)
+	end
+
+
+	"""
+		proxlin_init(prob::RpcaProb, iters, delta; ϵ=1e-3, eps=1e-8, ρ=5,
+		             maxIt=500, γ=10.0)
+
+	Run the modified prox-linear method for a robust PCA instance
+	initialized ``\\delta``-close to a solution for `iters` iterations.
+	"""
+	function proxlin_init(prob::RpcaProb, iters, delta; ϵ=1e-3, eps=1e-8, ρ=5,
+		                  maxIt=500, γ=10.0)
+		return rpcaProxLin_init(prob, iters, delta, eps=eps, inner_eps=ϵ, ρ=ρ,
+		                        maxIt=maxIt, gamma=γ)
 	end
 
 #------
@@ -1241,22 +1292,11 @@ module CompOpt
 	Apply the projected subgradient method with artificial "good" initialization
 	to a robust PCA problem.
 	"""
-	function pSgd_init(prob::RpcaProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10,
-		               mode=:euclidean)
+	function pSgd_init(prob::RpcaProb, iters, delta; λ=1.0, rho=0.98, eps=1e-10)
 		Xtrue = prob.X; d, r = size(Xtrue)
 		randDir = randn(d, r); randDir = randDir / norm(randDir)
 		Xinit = Xtrue + delta * randDir * norm(Xtrue)
-		if mode == :euclidean
-			randSDir = randn(d, d); randSDir = randSDir / norm(randSDir)
-			Sinit = prob.S + delta * randSDir * norm(prob.S)
-			# project
-			@inbounds for i = 1:d
-				Sinit[i, :] = Utils.l1Proj(Sinit[i, :], norm(prob.S[i, :], 1))
-			end
-			return pSgd_euc(prob, Xinit, Sinit, iters, λ=λ, rho=rho, eps=eps)
-		else
-			return pSgd_nEuc(prob, Xinit, iters, λ=λ, rho=rho, eps=eps)
-		end
+		return pSgd_nEuc(prob, Xinit, iters, λ=λ, rho=rho, eps=eps)
 	end
 
 
