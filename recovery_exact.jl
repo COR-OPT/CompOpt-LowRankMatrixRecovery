@@ -18,7 +18,7 @@ zero_pad!(v, lenTotal) = append!(v, zeros(lenTotal - length(v)))
 
 #= bilinear sensing =#
 function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
-	r = 5; m = 8 * r * (d1 + d2)
+	m = 8 * r * (d1 + d2)
 	prob_mild = CompOpt.genBilinProb(d1, d2, m, r, 0.25)
 	prob_high = CompOpt.genBilinProb(d1, d2, m, r, 0.40)
 	ds_mild = nothing; ds_high = nothing
@@ -32,10 +32,10 @@ function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
 		_, _, ds_high = CompOpt.proxlin_init(prob_high, delta, iters)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=LBLUE, style,
-	         label=L"$ (r, p) = (5, 0.25) $")
+	         label=latexstring("(r, p) = ($(r), 0.25)"))
 	semilogy(collect(1:length(ds_high)), ds_high, color=MBLUE, style,
-	         label=L"$ (r, p) = (5, 0.40) $")
-	r = 10; m = 8 * r * (d1 + d2)
+	         label=latexstring("(r, p) = ($(r), 0.40)"))
+	r *= 2; m = 8 * r * (d1 + d2)
 	prob_mild = CompOpt.genBilinProb(d1, d2, m, r, 0.25)
 	prob_high = CompOpt.genBilinProb(d1, d2, m, r, 0.40)
 	println("Running for rank $(r)...")
@@ -47,28 +47,29 @@ function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
 		_, _, ds_high = CompOpt.proxlin_init(prob_high, delta, iters)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=HBLUE, style,
-	         label=L"$ (r, p) = (10, 0.25) $")
+	         label=latexstring("(r, p) = ($(2 * r), 0.25)"))
 	semilogy(collect(1:length(ds_high)), ds_high, color="black", style,
-	         label=L"$ (r, p) = (10, 0.40) $")
+	         label=latexstring("(r, p) = ($(2 * r), 0.40)"))
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Bilinear sensing - $(algo_type) method"); legend(); show()
 	# compare with gradient descent
+	r = r ÷ 2;
 	println("Comparing both with gradient descent...")
-	prob_n5 = CompOpt.genBilinProb(d1, d2, 8 * 5 * (d1 + d2), 5)
-	prob_n10 = CompOpt.genBilinProb(d1, d2, 8 * 10 * (d1 + d2), 10)
+	prob_n5 = CompOpt.genBilinProb(d1, d2, 8 * r * (d1 + d2), r)
+	prob_n10 = CompOpt.genBilinProb(d1, d2, 8 * 2 * r * (d1 + d2), 2 * r)
 	_, _, ds_n5 = CompOpt.pSgd_init(prob_n5, iters, delta)
 	_, _, ds_n10 = CompOpt.pSgd_init(prob_n10, iters, delta)
 	_, _, ds_grad5 = CompOpt.bilinNaiveGD_init(prob_n5, delta, iters, 0.001)
 	_, _, ds_grad10 = CompOpt.bilinNaiveGD_init(prob_n10, delta, iters, 0.001)
 	figure();
 	semilogy(collect(1:length(ds_n5)), ds_n5, color=LBLUE,
-	         label=L"$ r = 5 $")
+	         label=latexstring("r = $(r)"))
 	semilogy(collect(1:length(ds_n10)), ds_n10, color=HBLUE,
-	         label=L"$ r = 10 $")
+	         label=latexstring("r = $(2 * r)"))
 	semilogy(collect(1:length(ds_grad5)), ds_grad5, color=LBLUE, "--",
-	         label=L"$ r = 5 $ - grad")
+	         label=latexstring("r = $(r)"))
 	semilogy(collect(1:length(ds_grad10)), ds_grad10, color=HBLUE, "--",
-	         label=L"$ r = 10 $ - grad")
+	         label=latexstring("r = $(2 * r)"))
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Bilinear sensing - Polyak subgradient vs. gradient descent")
 	legend(); show()
@@ -77,7 +78,7 @@ end
 
 #= symmetrized quadratic sensing =#
 function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
-	r = 5; m = 8 * r * d
+	m = 8 * r * d
 	prob_mild = CompOpt.genSymQuadProb(d, m, r, 0.25)
 	prob_high = CompOpt.genSymQuadProb(d, m, r, 0.40)
 	ds_mild = nothing; ds_high = nothing
@@ -91,10 +92,10 @@ function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
 		_, ds_high = CompOpt.proxlin_init(prob_high, delta, iters, eps=1e-12)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=LBLUE, style,
-	         label=L"$ (r, p) = (5, 0.25) $")
+	         label=latexstring("(r, p) = ($(r), 0.25)"))
 	semilogy(collect(1:length(ds_high)), ds_high, color=MBLUE, style,
-	         label=L"$ (r, p) = (5, 0.40) $")
-	r = 10; m = 8 * r * d
+	         label=latexstring("(r, p) = ($(r), 0.40)"))
+	r *= 2; m = 8 * r * d
 	prob_mild = CompOpt.genSymQuadProb(d, m, r, 0.25)
 	prob_high = CompOpt.genSymQuadProb(d, m, r, 0.40)
 	println("Running for rank $(r)...")
@@ -106,28 +107,29 @@ function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
 		_, ds_high = CompOpt.proxlin_init(prob_high, delta, iters, eps=1e-12)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=HBLUE, style,
-	         label=L"$ (r, p) = (10, 0.25) $")
+	         label=latexstring("(r, p) = ($(r), 0.25)"))
 	semilogy(collect(1:length(ds_high)), ds_high, color="black", style,
-	         label=L"$ (r, p) = (10, 0.40) $")
+	         label=latexstring("(r, p) = ($(r), 0.40)"))
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Quadratic sensing - $(algo_type) method"); legend(); show()
 	# compare with gradient descent
 	println("Comparing both with gradient descent...")
-	prob_n5 = CompOpt.genSymQuadProb(d, 8 * 5 * d, 5)
-	prob_n10 = CompOpt.genSymQuadProb(d, 8 * 10 * d, 10)
+	r = r ÷ 2
+	prob_n5 = CompOpt.genSymQuadProb(d, r * 8 * d, r)
+	prob_n10 = CompOpt.genSymQuadProb(d, 2 * r * 8 * d, 2 * r)
 	_, ds_n5 = CompOpt.pSgd_init(prob_n5, iters, delta)
 	_, ds_n10 = CompOpt.pSgd_init(prob_n10, iters, delta)
 	_, ds_grad5 = CompOpt.symQuadNaiveGD_init(prob_n5, delta, iters, 0.0001)
 	_, ds_grad10 = CompOpt.symQuadNaiveGD_init(prob_n10, delta, iters, 0.0001)
 	figure()
 	semilogy(collect(1:length(ds_n5)), ds_n5, color=LBLUE,
-	         label=L"$ r = 5 $")
+	         label=latexstring("r = $(r)"))
 	semilogy(collect(1:length(ds_n10)), ds_n10, color=HBLUE,
-	         label=L"$ r = 10 $")
+	         label=latexstring("r = $(2 * r)"))
 	semilogy(collect(1:length(ds_grad5)), ds_grad5, color=LBLUE, "--",
-	         label=L"$ r = 5 $ - grad")
+	         label=latexstring("r = $(r)"))
 	semilogy(collect(1:length(ds_grad10)), ds_grad10, color=HBLUE, "--",
-	         label=L"$ r = 10 $ - grad")
+	         label=latexstring("r = $(2 * r)"))
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Quadratic sensing - Polyak subgradient vs. gradient descent")
 	legend(); show()
@@ -158,6 +160,28 @@ function matcomp_experiment(d, r, iters, delta; algo_type=:subgradient)
 	end
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Matrix completion - $(algo_type) method vs. gradient descent")
+	legend(); show()
+end
+
+
+#= robust pca =#
+function rpca_experiment(d, r, iters, delta; algo_type=:subgradient)
+	pCol = [LBLUE, HBLUE, "black"]; idx = 0
+	for noise_lvl in [0.0; 0.1; 0.2]
+		idx += 1
+		prob = CompOpt.genRpcaProb(d, r, noise_lvl)
+		if algo_type == :subgradient
+			_, ds = CompOpt.pSgd_init(prob, iters, delta)
+			semilogy(collect(1:length(ds)), ds, color=pCol[idx],
+			         label=latexstring("p = $(noise_lvl)"))
+		else
+			_, ds = CompOpt.proxlin_init(prob, iters, delta, ϵ=1e-4)
+			semilogy(collect(1:length(ds)), ds, color=pCol[idx], ".-",
+			         label=latexstring("p = $(noise_lvl)"))
+		end
+	end
+	xlabel(L"$ k $"); ylabel("Normalized ℓ₁ error")
+	title("Robust PCA - $(algo_type) method - rank: $(r)")
 	legend(); show()
 end
 
@@ -238,9 +262,10 @@ function main()
 		bilin_experiment(d1, d2, r, iters, delta, algo_type=algo)
 	elseif prob_type == "matcomp"
 		algo = (algo_type == "subgradient") ? :subgradient : :proxlinear
-		df = matcomp_experiment(d1, r, iters, delta, algo_type=algo)
+		matcomp_experiment(d1, r, iters, delta, algo_type=algo)
 	else
-		throw(Exception("Not implemented yet"))
+		algo = (algo_type == "subgradient") ? :subgradient : :proxlinear
+		rpca_experiment(d1, r, iters, delta, algo_type=algo)
 	end
 end
 
