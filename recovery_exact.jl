@@ -253,7 +253,6 @@ function main()
 	algo_type = parsed["algo_type"]
 	# seed RNG
 	Random.seed!(rnd_seed)
-	df = nothing;
 	if prob_type == "quadratic"
 		algo = (algo_type == "subgradient") ? :subgradient : :proxlinear
 		quad_experiment(d1, r, iters, delta, algo_type=algo)

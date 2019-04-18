@@ -1,6 +1,5 @@
 module Utils
 
-    using FFTW
     using LinearAlgebra
     using Random
 	using SparseArrays
@@ -265,18 +264,6 @@ module Utils
 		G[indMax, :] = 2 * ((X - Xk)[indMax, :])
 		return G
 	end
-
-
-    """
-        subDftMat(A, d, r)
-
-    Return the first ``r`` columns from ``d`` randomly chosen rows of a
-    ``2d \\times 2d`` DFT matrix.
-    """
-    function subDftMat(A, d, r)
-        fmat = shuffle(fft(Matrix{Float64}(I, 2 * d, 2 * d), 2))
-        return fmat[1:d, 1:r]
-    end
 
 
     """
