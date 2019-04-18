@@ -47,9 +47,9 @@ function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
 		_, _, ds_high = CompOpt.proxlin_init(prob_high, delta, iters)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=HBLUE, style,
-	         label=latexstring("(r, p) = ($(2 * r), 0.25)"))
+	         label=latexstring("(r, p) = ($(r), 0.25)"))
 	semilogy(collect(1:length(ds_high)), ds_high, color="black", style,
-	         label=latexstring("(r, p) = ($(2 * r), 0.40)"))
+	         label=latexstring("(r, p) = ($(r), 0.40)"))
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Bilinear sensing - $(algo_type) method"); legend(); show()
 	# compare with gradient descent
