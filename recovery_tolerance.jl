@@ -1,4 +1,5 @@
 using ArgParse
+using DataFrames
 using LinearAlgebra
 using Printf
 using PyPlot
@@ -18,7 +19,7 @@ function quad_dense(d, i, delta, dLvlList)
 		# additive gaussian noise
 		prob = CompOpt.genSymQuadProb(d, i * r * d, r, 0.25, denseLvl=dLvl)
 		_, ds_sg = CompOpt.pSgd_init(prob, 500, delta, eps=1e-12)
-		_, ds_pl = CompOpt.symQuadProxlin_init(prob, delta, 20, eps=1e-12)
+		_, ds_pl = CompOpt.proxlin_init(prob, 20, delta, eps=1e-12)
 		subplot(211); semilogy(collect(1:length(ds_sg)), ds_sg)
 		xlabel(L"$ k $"); ylabel("Normalized error")
 		title("Subgradient method")
@@ -37,7 +38,7 @@ function matcomp_dense(d, delta, dLvlList)
 		figure()
 		prob = CompOpt.genMatCompProb(d, r, 0.25, denseLvl=dLvl)
 		_, ds_sg = CompOpt.pSgd_init(prob, 500, delta, eps=1e-12)
-		_, ds_pl = CompOpt.matCompProxLinear_init(prob, 20, delta)
+		_, ds_pl = CompOpt.proxlin_init(prob, 20, delta)
 		subplot(211); semilogy(collect(1:length(ds_sg)), ds_sg)
 		xlabel(L"$k$"); ylabel(L"$ \\| X_k X_k^\\top - M_{\\sharp} \\|_F / \\| M_{\\sharp} \\|_F")
 		title("Subgradient method")

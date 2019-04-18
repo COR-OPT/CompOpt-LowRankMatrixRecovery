@@ -28,8 +28,8 @@ function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
 		_, _, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta)
 		_, _, ds_high = CompOpt.pSgd_init(prob_high, iters, delta)
 	else
-		_, _, ds_mild = CompOpt.proxlin_init(prob_mild, delta, iters)
-		_, _, ds_high = CompOpt.proxlin_init(prob_high, delta, iters)
+		_, _, ds_mild = CompOpt.proxlin_init(prob_mild, iters, delta)
+		_, _, ds_high = CompOpt.proxlin_init(prob_high, iters, delta)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=LBLUE, style,
 	         label=latexstring("(r, p) = ($(r), 0.25)"))
@@ -43,8 +43,8 @@ function bilin_experiment(d1, d2, r, iters, delta; algo_type=:subgradient)
 		_, _, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta)
 		_, _, ds_high = CompOpt.pSgd_init(prob_high, iters, delta)
 	else
-		_, _, ds_mild = CompOpt.proxlin_init(prob_mild, delta, iters)
-		_, _, ds_high = CompOpt.proxlin_init(prob_high, delta, iters)
+		_, _, ds_mild = CompOpt.proxlin_init(prob_mild, iters, delta)
+		_, _, ds_high = CompOpt.proxlin_init(prob_high, iters, delta)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=HBLUE, style,
 	         label=latexstring("(r, p) = ($(r), 0.25)"))
@@ -85,11 +85,11 @@ function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
 	style = (algo_type == :subgradient) ? "-" : ".-"  # line style
 	println("Running for rank $(r)...")
 	if algo_type == :subgradient
-		_, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta, eps=1e-12)
-		_, ds_high = CompOpt.pSgd_init(prob_high, iters, delta, eps=1e-12)
+		_, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta)
+		_, ds_high = CompOpt.pSgd_init(prob_high, iters, delta)
 	else
-		_, ds_mild = CompOpt.proxlin_init(prob_mild, delta, iters, eps=1e-12)
-		_, ds_high = CompOpt.proxlin_init(prob_high, delta, iters, eps=1e-12)
+		_, ds_mild = CompOpt.proxlin_init(prob_mild, iters, delta)
+		_, ds_high = CompOpt.proxlin_init(prob_high, iters, delta)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=LBLUE, style,
 	         label=latexstring("(r, p) = ($(r), 0.25)"))
@@ -100,11 +100,11 @@ function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
 	prob_high = CompOpt.genSymQuadProb(d, m, r, 0.40)
 	println("Running for rank $(r)...")
 	if algo_type == :subgradient
-		_, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta, eps=1e-12)
-		_, ds_high = CompOpt.pSgd_init(prob_high, iters, delta, eps=1e-12)
+		_, ds_mild = CompOpt.pSgd_init(prob_mild, iters, delta)
+		_, ds_high = CompOpt.pSgd_init(prob_high, iters, delta)
 	else
-		_, ds_mild = CompOpt.proxlin_init(prob_mild, delta, iters, eps=1e-12)
-		_, ds_high = CompOpt.proxlin_init(prob_high, delta, iters, eps=1e-12)
+		_, ds_mild = CompOpt.proxlin_init(prob_mild, iters, delta)
+		_, ds_high = CompOpt.proxlin_init(prob_high, iters, delta)
 	end
 	semilogy(collect(1:length(ds_mild)), ds_mild, color=HBLUE, style,
 	         label=latexstring("(r, p) = ($(r), 0.25)"))
@@ -113,26 +113,28 @@ function quad_experiment(d, r, iters, delta; algo_type=:subgradient)
 	xlabel(L"$ k $"); ylabel("Normalized error")
 	title("Quadratic sensing - $(algo_type) method"); legend(); show()
 	# compare with gradient descent
-	println("Comparing both with gradient descent...")
-	r = r ÷ 2
-	prob_n5 = CompOpt.genSymQuadProb(d, r * 8 * d, r)
-	prob_n10 = CompOpt.genSymQuadProb(d, 2 * r * 8 * d, 2 * r)
-	_, ds_n5 = CompOpt.pSgd_init(prob_n5, iters, delta)
-	_, ds_n10 = CompOpt.pSgd_init(prob_n10, iters, delta)
-	_, ds_grad5 = CompOpt.symQuadNaiveGD_init(prob_n5, delta, iters, 0.0001)
-	_, ds_grad10 = CompOpt.symQuadNaiveGD_init(prob_n10, delta, iters, 0.0001)
-	figure()
-	semilogy(collect(1:length(ds_n5)), ds_n5, color=LBLUE,
-	         label=latexstring("r = $(r)"))
-	semilogy(collect(1:length(ds_n10)), ds_n10, color=HBLUE,
-	         label=latexstring("r = $(2 * r)"))
-	semilogy(collect(1:length(ds_grad5)), ds_grad5, color=LBLUE, "--",
-	         label=latexstring("r = $(r)"))
-	semilogy(collect(1:length(ds_grad10)), ds_grad10, color=HBLUE, "--",
-	         label=latexstring("r = $(2 * r)"))
-	xlabel(L"$ k $"); ylabel("Normalized error")
-	title("Quadratic sensing - Polyak subgradient vs. gradient descent")
-	legend(); show()
+	if algo_type == :subgradient
+		println("Comparing both with gradient descent...")
+		r = r ÷ 2
+		prob_n5 = CompOpt.genSymQuadProb(d, r * 8 * d, r)
+		prob_n10 = CompOpt.genSymQuadProb(d, 2 * r * 8 * d, 2 * r)
+		_, ds_n5 = CompOpt.pSgd_init(prob_n5, iters, delta)
+		_, ds_n10 = CompOpt.pSgd_init(prob_n10, iters, delta)
+		_, ds_grad5 = CompOpt.symQuadNaiveGD_init(prob_n5, delta, iters, 0.0001)
+		_, ds_grad10 = CompOpt.symQuadNaiveGD_init(prob_n10, delta, iters, 0.0001)
+		figure()
+		semilogy(collect(1:length(ds_n5)), ds_n5, color=LBLUE,
+	             label=latexstring("r = $(r)"))
+		semilogy(collect(1:length(ds_n10)), ds_n10, color=HBLUE,
+	             label=latexstring("r = $(2 * r)"))
+		semilogy(collect(1:length(ds_grad5)), ds_grad5, color=LBLUE, "--",
+	             label=latexstring("r = $(r)"))
+		semilogy(collect(1:length(ds_grad10)), ds_grad10, color=HBLUE, "--",
+	             label=latexstring("r = $(2 * r)"))
+		xlabel(L"$ k $"); ylabel("Normalized error")
+		title("Quadratic sensing - Polyak subgradient vs. gradient descent")
+		legend(); show()
+	end
 end
 
 
@@ -152,14 +154,18 @@ function matcomp_experiment(d, r, iters, delta; algo_type=:subgradient)
 			         label=latexstring("p = $sample_freq"));
 			semilogy(collect(1:iters), ds_grad, color=pCol[idx], "--")
 		else
-			_, ds = CompOpt.matCompProxLinear_init(prob, iters, delta)
+			_, ds = CompOpt.proxlin_init(prob, iters, delta)
 			zero_pad!(ds, iters)
 			semilogy(collect(1:iters), ds, color=pCol[idx], ".-",
 			         label=latexstring("p = $sample_freq"))
 		end
 	end
 	xlabel(L"$ k $"); ylabel("Normalized error")
-	title("Matrix completion - $(algo_type) method vs. gradient descent")
+	if algo_type == :subgradient
+		title("Matrix completion - $(algo_type) method vs. gradient descent")
+	else
+		title("Matrix completion - $(algo_type) method")
+	end
 	legend(); show()
 end
 
@@ -190,9 +196,9 @@ function main()
 	# parse arguments
 	s = ArgParseSettings(description="""
 						 Generates a set of synthetic problem instances for
-						 different matrix recovery problems and solves them
-						 using different methods, plotting the convergence
-						 history.""")
+						 a given ratio m / dim and failure probabilities and
+						 solves them using a specified method.
+						 Outputs the convergence history in a .csv file.""")
 	@add_arg_table s begin
 		"--d1"
 			help = "Dimension 1 of the problem"
@@ -253,6 +259,7 @@ function main()
 	algo_type = parsed["algo_type"]
 	# seed RNG
 	Random.seed!(rnd_seed)
+	df = nothing;
 	if prob_type == "quadratic"
 		algo = (algo_type == "subgradient") ? :subgradient : :proxlinear
 		quad_experiment(d1, r, iters, delta, algo_type=algo)

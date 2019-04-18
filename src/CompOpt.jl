@@ -116,7 +116,7 @@ module CompOpt
 		A = randn(m, d1); B = randn(m, d2); W = randn(d1, r); X = randn(d2, r)
 		y = Utils.rowwise_prod(A * W, B * X)  # row-wise dot product
 		if denseLvl <= 1e-12
-			Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
+        	Utils.corrupt_measurements!(y, noise_lvl, :gaussian)
 		else
 			Utils.corrupt_measurements!(y, noise_lvl, :large_sparse)
 			e = randn(length(y)); e = (svdvals(X)[r]^2) * e / norm(e)
@@ -673,7 +673,7 @@ module CompOpt
 	solution for the bilinear or symmetrized quadratic sensing problems for
 	`iters` iterations.
 	"""
-	function proxlin_init(prob::Union{SymQuadProb,BilinProb}, delta, iters;
+	function proxlin_init(prob::Union{SymQuadProb,BilinProb}, iters, delta;
 		                  γ=5, maxIt=2000, ρ=nothing, ϵ=(i -> min(1e-4, 4.0^(-i))),
 						  eps=1e-10)
 		if isa(prob, BilinProb)
