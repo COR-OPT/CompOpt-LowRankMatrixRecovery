@@ -190,9 +190,9 @@ function main()
 	# parse arguments
 	s = ArgParseSettings(description="""
 						 Generates a set of synthetic problem instances for
-						 a given ratio m / dim and failure probabilities and
-						 solves them using a specified method.
-						 Outputs the convergence history in a .csv file.""")
+						 different matrix recovery problems and solves them
+						 using different methods, plotting the convergence
+						 history.""")
 	@add_arg_table s begin
 		"--d1"
 			help = "Dimension 1 of the problem"

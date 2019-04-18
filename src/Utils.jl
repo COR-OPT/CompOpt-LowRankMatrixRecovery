@@ -286,7 +286,8 @@ module Utils
     `` \\| A \\|_{2,\\infty} \\leq \\sqrt{c r / d} \\| A \\|_{op}``.
     """
     function genIncoherentMatrix(d, r)
-        return randn(d, r)   # fix this
+		mapB = (A -> map.(x -> (abs(x) < 10) ? x : 0, A))
+        return mapB(randn(d, r)) * mapB(randn(r, r))
     end
 
 
